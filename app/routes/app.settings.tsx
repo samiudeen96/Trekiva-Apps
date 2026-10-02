@@ -55,7 +55,7 @@ export default function Settings() {
         <s-stack gap="small-200">
           <s-text>Shop: {shop}</s-text>
           <s-text>App URL: {appUrl}</s-text>
-          <s-text>Storefront proxy: https://{shop}{proxyPath}/*</s-text>
+          <s-text>{`Storefront proxy: https://${shop}${proxyPath}/*`}</s-text>
         </s-stack>
       </s-section>
     </s-page>

@@ -17,7 +17,7 @@ describe("flow gateway", () => {
   it("sends the trigger payload matching the extension fields", async () => {
     const a = admin({ data: { flowTriggerReceive: { userErrors: [] } } });
     await createFlowGateway(a).triggerWelcomeOfferClaimed(input);
-    const [, opts] = a.graphql.mock.calls[0] as unknown as [string, { variables: any }];
+    const [, opts] = a.graphql.mock.calls[0] as unknown as [string, { variables: Record<string, unknown> }];
     expect(opts.variables).toEqual({
       handle: FLOW_TRIGGER_HANDLE,
       payload: {
