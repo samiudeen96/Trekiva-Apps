@@ -1,0 +1,21 @@
+{%- comment -%}
+  Trekiva popup app embed. Enable it in Online Store > Themes > Customize > App embeds.
+  All data comes from the app proxy; nothing secret is rendered here.
+{%- endcomment -%}
+{{ 'trekiva-popup.css' | asset_url | stylesheet_tag }}
+<div
+  id="trekiva-popup-root"
+  data-proxy-base="/apps/trekiva"
+  data-page-type="{{ request.page_type | escape }}"
+  data-design-mode="{{ request.design_mode }}"
+  hidden
+></div>
+<script src="{{ 'trekiva-popup.js' | asset_url }}" defer></script>
+
+{% schema %}
+{
+  "name": "Trekiva Popup",
+  "target": "body",
+  "settings": []
+}
+{% endschema %}

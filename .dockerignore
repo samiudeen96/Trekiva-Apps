@@ -1,0 +1,13 @@
+.cache
+build
+node_modules
+.git
+.env
+.env.*
+!.env.example
+.react-router
+.shopify
+docs
+deploy
+*.md
+docker-compose*.yml

@@ -1,0 +1,14 @@
+# Local development database only. Bound to loopback; production compose is added in Phase 10.
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: trekiva
+      POSTGRES_PASSWORD: change-me
+      POSTGRES_DB: trekiva
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - trekiva_pg_dev:/var/lib/postgresql/data
+volumes:
+  trekiva_pg_dev:

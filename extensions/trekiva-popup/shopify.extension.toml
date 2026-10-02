@@ -1,0 +1,6 @@
+api_version = "2025-10"
+
+[[extensions]]
+name = "Trekiva Popup"
+handle = "trekiva-popup"
+type = "theme"

@@ -1,0 +1,103 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Session {
+  id                  String    @id
+  shop                String
+  state               String
+  isOnline            Boolean   @default(false)
+  scope               String?
+  expires             DateTime?
+  accessToken         String
+  userId              BigInt?
+  firstName           String?
+  lastName            String?
+  email               String?
+  accountOwner        Boolean   @default(false)
+  locale              String?
+  collaborator        Boolean?  @default(false)
+  emailVerified       Boolean?  @default(false)
+  refreshToken        String?
+  refreshTokenExpires DateTime?
+
+  @@index([shop])
+}
+
+enum CampaignType {
+  WELCOME_DISCOUNT
+}
+
+enum CampaignStatus {
+  DRAFT
+  ACTIVE
+  DISABLED
+}
+
+enum PopupTemplate {
+  SPLIT_IMAGE
+  CENTERED_MINIMAL
+  IMAGE_BANNER
+}
+
+enum EmailStatus {
+  PENDING
+  TRIGGERED
+  SENT
+  FAILED
+}
+
+model Campaign {
+  id            String         @id @default(cuid())
+  shopDomain    String         @map("shop_domain")
+  name          String
+  type          CampaignType   @default(WELCOME_DISCOUNT)
+  status        CampaignStatus @default(DRAFT)
+  template      PopupTemplate  @default(SPLIT_IMAGE)
+
+  // Existing Shopify native discount (never created by this app).
+  discountId    String?        @map("discount_id")
+  discountCode  String?        @map("discount_code")
+  discountTitle String?        @map("discount_title")
+
+  // Validated with zod in app/campaigns (versioned via schemaVersion inside each document).
+  content       Json
+  design        Json
+  rules         Json
+
+  createdAt     DateTime       @default(now()) @map("created_at")
+  updatedAt     DateTime       @updatedAt @map("updated_at")
+
+  claims        WelcomeOfferClaim[]
+
+  @@index([shopDomain, status])
+  @@map("campaigns")
+}
+
+model WelcomeOfferClaim {
+  id                String      @id @default(cuid())
+  shopDomain        String      @map("shop_domain")
+  campaignId        String      @map("campaign_id")
+  shopifyCustomerId String?     @map("shopify_customer_id")
+  emailNormalized   String      @map("email_normalized")
+  discountCode      String      @map("discount_code")
+  claimedAt         DateTime    @default(now()) @map("claimed_at")
+  flowTriggeredAt   DateTime?   @map("flow_triggered_at")
+  emailSentAt       DateTime?   @map("email_sent_at")
+  emailStatus       EmailStatus @default(PENDING) @map("email_status")
+  createdAt         DateTime    @default(now()) @map("created_at")
+  updatedAt         DateTime    @updatedAt @map("updated_at")
+
+  campaign          Campaign    @relation(fields: [campaignId], references: [id], onDelete: Restrict)
+
+  // The single source of truth for "one email, one claim per campaign".
+  @@unique([shopDomain, campaignId, emailNormalized], map: "welcome_offer_claims_unique_email_per_campaign")
+  @@index([shopDomain, claimedAt])
+  @@index([campaignId])
+  @@map("welcome_offer_claims")
+}
