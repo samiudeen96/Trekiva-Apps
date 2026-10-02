@@ -1,10 +1,10 @@
-# Trekiva App: deployment (Elestio VM)
+# Trekiva Discount: deployment (Elestio VM)
 
 Stack: `nginx` (TLS) → `trekiva-app` (Node 22, non-root) → `postgres` (internal network only, persistent volume).
 
 ## 0. Prerequisites
 - Elestio VM (Ubuntu) with Docker + Docker Compose, a DNS A record such as `trekiva-app.example.com` → the VM.
-- A Shopify Partner app (custom or public) named **Trekiva App**.
+- A Shopify Partner app (custom or public) named **Trekiva Discount**.
 - Protected Customer Data access requested for the app (we read customer emails).
 
 ## 1. Configure the VM

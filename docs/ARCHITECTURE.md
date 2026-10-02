@@ -1,4 +1,4 @@
-# Trekiva App — Architecture
+# Trekiva Discount — Architecture
 
 ## 1. Final architecture
 
@@ -10,7 +10,7 @@ Storefront (Trekiva theme)
        ▼
 Shopify App Proxy  (adds signature + shop; storefront same-origin, no CORS, no secrets)
        ▼
-Trekiva App  (React Router 7 + Node 22 + TypeScript strict)  ── Nginx/Traefik (TLS) ──
+Trekiva Discount  (React Router 7 + Node 22 + TypeScript strict)  ── Nginx/Traefik (TLS) ──
   routes/api.public.*   → verify proxy signature → rate limit → zod → ClaimService
   routes/app.*          → embedded admin (Polaris web components + App Bridge)
   routes/webhooks.*     → app/uninstalled, compliance topics
