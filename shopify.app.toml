@@ -1,7 +1,7 @@
 # This file stores configurations for your Shopify app.
-name = "Trekiva Discount"
-client_id = ""
-application_url = "https://example.com"
+name = "Trekiva App"
+client_id = "3d65bcc4cd60dafcad278e2aeb663931"
+application_url = "https://corner-pas-pierce-orders.trycloudflare.com"
 embedded = true
 
 [access_scopes]
@@ -36,11 +36,11 @@ api_version = "2026-10"
   compliance_topics = ["shop/redact"]
 
 [auth]
-redirect_urls = ["https://example.com/auth/callback"]
+redirect_urls = ["https://corner-pas-pierce-orders.trycloudflare.com/auth/callback"]
 
 # Storefront requests go through the app proxy (signed by Shopify, same-origin, no CORS).
 # https://<shop>/apps/trekiva/*  ->  <app url>/api/public/*
 [app_proxy]
-url = "https://example.com/api/public"
+url = "https://corner-pas-pierce-orders.trycloudflare.com/api/public"
 subpath = "trekiva"
 prefix = "apps"

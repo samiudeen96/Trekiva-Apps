@@ -2,14 +2,14 @@ import type { LoaderFunctionArgs } from "react-router";
 import { useLoaderData } from "react-router";
 import { authenticate } from "../shopify.server";
 import { env } from "../utils/env.server";
-import { checkDatabase, checkShopifyAndWebhooks, type Check } from "../utils/health.server";
+import { checkDatabase, checkShopify, type Check } from "../utils/health.server";
 import { claimRepository } from "../repositories/claim.repository";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
   const [database, shopifyChecks, stats] = await Promise.all([
     checkDatabase(),
-    checkShopifyAndWebhooks(admin, session.scope),
+    checkShopify(admin, session.scope),
     claimRepository.stats(session.shop),
   ]);
 
@@ -29,7 +29,6 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       ["Granted scopes", shopifyChecks.scopes],
       ["Database", database],
       ["Shopify Flow", flow],
-      ["Webhooks", shopifyChecks.webhooks],
     ] as [string, Check][],
   };
 };

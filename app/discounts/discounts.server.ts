@@ -87,9 +87,14 @@ export function toDiscountSummary(node: any): DiscountSummary | null {
     warnings.push(
       "Each claim gets its own code. Set \"Limit number of times this discount can be used in total\" to 1 on this discount so each code works only once.",
     );
-  if (d.context?.__typename === "DiscountCustomers" || d.context?.__typename === "DiscountCustomerSegments")
+  if (d.context?.__typename === "DiscountCustomers")
     warnings.push(
-      `This discount is limited to ${eligibility.toLowerCase()}, so new sign-ups cannot use it. Set eligibility to All customers.`,
+      "This discount is limited to specific customers, so new sign-ups cannot use it. Set eligibility to All customers.",
+    );
+  // A segment can include new sign-ups (e.g. "no orders yet"), so this is only a prompt to check.
+  if (d.context?.__typename === "DiscountCustomerSegments")
+    warnings.push(
+      "This discount is limited to customer segments. Check that the segments include new sign-ups, or set eligibility to All customers.",
     );
   if (!isPercentage)
     warnings.push("This is not a percentage discount; copy that mentions a percentage may be wrong.");

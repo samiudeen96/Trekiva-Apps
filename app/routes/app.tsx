@@ -17,6 +17,14 @@ export default function App() {
   return (
     <AppProvider apiKey={apiKey}>
       <s-app-nav>
+        {/* Where the app name in the admin sidebar goes; hidden from the menu. Without it, Shopify opens "/". */}
+        <s-link
+          href="/app"
+          // @ts-expect-error App Bridge supports rel="home"; @shopify/polaris-types does not declare it yet.
+          rel="home"
+        >
+          Home
+        </s-link>
         <s-link href="/app">Dashboard</s-link>
         <s-link href="/app/campaigns">Campaigns</s-link>
         <s-link href="/app/claims">Claims</s-link>
