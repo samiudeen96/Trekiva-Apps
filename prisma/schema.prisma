@@ -50,6 +50,8 @@ enum EmailStatus {
   TRIGGERED
   SENT
   FAILED
+  // Flow fired, but the customer opted out of email marketing, so Shopify Email will not deliver.
+  NOT_SUBSCRIBED
 }
 
 model Campaign {
@@ -85,6 +87,7 @@ model WelcomeOfferClaim {
   campaignId        String      @map("campaign_id")
   shopifyCustomerId String?     @map("shopify_customer_id")
   emailNormalized   String      @map("email_normalized")
+  // This claim's own code, added to the campaign's Shopify discount.
   discountCode      String      @map("discount_code")
   claimedAt         DateTime    @default(now()) @map("claimed_at")
   flowTriggeredAt   DateTime?   @map("flow_triggered_at")

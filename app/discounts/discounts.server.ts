@@ -11,7 +11,9 @@ const DISCOUNT_FIELDS = `#graphql
       startsAt
       endsAt
       appliesOncePerCustomer
-      codes(first: 1) { nodes { code } }
+      usageLimit
+      # Oldest code = the merchant's base code, not one of the per-claim codes added later.
+      codes(first: 1, sortKey: CREATED_AT) { nodes { code } }
       customerGets {
         value {
           __typename
@@ -78,9 +80,17 @@ export function toDiscountSummary(node: any): DiscountSummary | null {
         ? `Min. ${min.greaterThanOrEqualToQuantity} items`
         : "None";
 
+  const eligibility = ELIGIBILITY[d.context?.__typename] ?? "All customers";
   const warnings: string[] = [];
-  if (!d.appliesOncePerCustomer)
-    warnings.push("Not limited to one use per customer. Enable it on this discount in Shopify.");
+  // Shopify applies usageLimit to each code, so 1 makes every per-claim code single-use.
+  if (d.usageLimit !== 1)
+    warnings.push(
+      "Each claim gets its own code. Set \"Limit number of times this discount can be used in total\" to 1 on this discount so each code works only once.",
+    );
+  if (d.context?.__typename === "DiscountCustomers" || d.context?.__typename === "DiscountCustomerSegments")
+    warnings.push(
+      `This discount is limited to ${eligibility.toLowerCase()}, so new sign-ups cannot use it. Set eligibility to All customers.`,
+    );
   if (!isPercentage)
     warnings.push("This is not a percentage discount; copy that mentions a percentage may be wrong.");
   if (d.status === "EXPIRED") warnings.push("This discount has expired.");
@@ -97,7 +107,8 @@ export function toDiscountSummary(node: any): DiscountSummary | null {
     endsAt: d.endsAt ?? null,
     oncePerCustomer: Boolean(d.appliesOncePerCustomer),
     minimumRequirement,
-    eligibility: ELIGIBILITY[d.context?.__typename] ?? "All customers",
+    usageLimit: d.usageLimit ?? null,
+    eligibility,
     warnings,
   };
 }

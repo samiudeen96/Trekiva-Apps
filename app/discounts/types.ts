@@ -10,6 +10,8 @@ export interface DiscountSummary {
   startsAt: string | null;
   endsAt: string | null;
   oncePerCustomer: boolean;
+  /** Uses allowed per code; null = unlimited. */
+  usageLimit: number | null;
   minimumRequirement: string;
   eligibility: string;
   /** Merchant-facing issues; they never block saving (except expiry, see service). */

@@ -5,6 +5,7 @@ import { ClaimService } from "../claims/claim.service";
 import { CampaignUnavailableError, InvalidEmailError } from "../claims/types";
 import { createCustomerGateway } from "../shopify/customers.server";
 import { createFlowGateway } from "../flow/flow.server";
+import { createDiscountCodeGateway } from "../discounts/redeem-codes.server";
 import { allowClaimAttempt, clientIp } from "../utils/rate-limit.server";
 import { logger } from "../utils/logger.server";
 
@@ -35,6 +36,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
   const claimService = new ClaimService(
     createCustomerGateway(admin),
     createFlowGateway(admin),
+    createDiscountCodeGateway(admin),
   );
   try {
     const outcome = await claimService.claim({

@@ -1,16 +1,28 @@
 import type { AdminGraphqlClient } from "../discounts/types";
-import type { CustomerGateway } from "../claims/types";
+import type { CustomerGateway, CustomerRecord } from "../claims/types";
 import { logger } from "../utils/logger.server";
+import { gql } from "./graphql.server";
 
 export const FIND_CUSTOMER = `#graphql
   query TrekivaFindCustomer($query: String!) {
-    customers(first: 1, query: $query) { nodes { id } }
+    customers(first: 1, query: $query) {
+      nodes { id defaultEmailAddress { marketingState } }
+    }
   }
 `;
 
 export const CREATE_CUSTOMER = `#graphql
   mutation TrekivaCreateCustomer($input: CustomerInput!) {
     customerCreate(input: $input) {
+      customer { id }
+      userErrors { field message }
+    }
+  }
+`;
+
+export const SUBSCRIBE_CUSTOMER = `#graphql
+  mutation TrekivaSubscribeCustomer($input: CustomerEmailMarketingConsentUpdateInput!) {
+    customerEmailMarketingConsentUpdate(input: $input) {
       customer { id }
       userErrors { field message }
     }
@@ -26,47 +38,58 @@ export const SET_METAFIELDS = `#graphql
   }
 `;
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
-async function gql(admin: AdminGraphqlClient, query: string, variables: Record<string, unknown>) {
-  const res = await admin.graphql(query, { variables });
-  const json = (await res.json()) as { data?: any; errors?: unknown };
-  if (json.errors || !json.data) {
-    throw new Error(`Shopify GraphQL error: ${JSON.stringify(json.errors ?? "no data")}`);
-  }
-  return json.data;
+interface FoundCustomer {
+  id: string;
+  defaultEmailAddress: { marketingState: string } | null;
 }
 
-async function findByEmail(admin: AdminGraphqlClient, email: string): Promise<string | null> {
+const singleOptIn = () => ({
+  marketingState: "SUBSCRIBED",
+  marketingOptInLevel: "SINGLE_OPT_IN",
+  consentUpdatedAt: new Date().toISOString(),
+});
+
+async function findByEmail(admin: AdminGraphqlClient, email: string): Promise<FoundCustomer | null> {
   // Email is validated upstream; quotes are escaped anyway so it stays one search term.
   const q = `email:"${email.replace(/["\\]/g, "")}"`;
   const data = await gql(admin, FIND_CUSTOMER, { query: q });
-  return data.customers.nodes[0]?.id ?? null;
+  return data.customers.nodes[0] ?? null;
+}
+
+/**
+ * Submitting the popup is the opt-in, but only for customers who never chose.
+ * An explicit unsubscribe, a pending double opt-in or an invalid address is never overridden.
+ */
+async function withConsent(admin: AdminGraphqlClient, c: FoundCustomer): Promise<CustomerRecord> {
+  const state = c.defaultEmailAddress?.marketingState;
+  if (state === "SUBSCRIBED") return { id: c.id, subscribed: true };
+  if (state !== "NOT_SUBSCRIBED") return { id: c.id, subscribed: false };
+
+  const data = await gql(admin, SUBSCRIBE_CUSTOMER, {
+    input: { customerId: c.id, emailMarketingConsent: singleOptIn() },
+  });
+  const errs = data.customerEmailMarketingConsentUpdate.userErrors;
+  if (errs?.length) {
+    throw new Error(`customerEmailMarketingConsentUpdate failed: ${JSON.stringify(errs)}`);
+  }
+  return { id: c.id, subscribed: true };
 }
 
 export function createCustomerGateway(admin: AdminGraphqlClient): CustomerGateway {
   return {
     async findOrCreate({ email }) {
       const existing = await findByEmail(admin, email);
-      if (existing) return existing;
+      if (existing) return withConsent(admin, existing);
 
       const data = await gql(admin, CREATE_CUSTOMER, {
-        input: {
-          email,
-          // Only brand-new customers are subscribed; existing customers' consent is never changed.
-          emailMarketingConsent: {
-            marketingState: "SUBSCRIBED",
-            marketingOptInLevel: "SINGLE_OPT_IN",
-            consentUpdatedAt: new Date().toISOString(),
-          },
-          tags: ["trekiva-welcome-popup"],
-        },
+        input: { email, emailMarketingConsent: singleOptIn(), tags: ["trekiva-welcome-popup"] },
       });
       const { customer, userErrors } = data.customerCreate;
-      if (customer?.id) return customer.id as string;
+      if (customer?.id) return { id: customer.id as string, subscribed: true };
 
       // Created concurrently elsewhere (e.g. checkout): look it up again before giving up.
       const retry = await findByEmail(admin, email);
-      if (retry) return retry;
+      if (retry) return withConsent(admin, retry);
       throw new Error(`customerCreate failed: ${JSON.stringify(userErrors)}`);
     },
 

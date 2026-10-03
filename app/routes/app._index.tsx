@@ -23,6 +23,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     claimsToday: stats.today,
     claimsLast7Days: stats.last7Days,
     failedClaims: stats.failed,
+    notSubscribedClaims: stats.notSubscribed,
     recent: recent.map((c) => ({
       id: c.id,
       email: c.emailNormalized,
@@ -48,6 +49,12 @@ export default function Dashboard() {
         <s-banner tone="critical" heading={`${d.failedClaims} claim(s) did not reach Shopify Flow`}>
           Those customers did not get their email yet. They will be retried automatically when they submit
           again. Check Settings for connection problems.
+        </s-banner>
+      )}
+      {d.notSubscribedClaims > 0 && (
+        <s-banner tone="warning" heading={`${d.notSubscribedClaims} claim(s) from customers who unsubscribed from email marketing`}>
+          Flow was triggered, but Shopify Email does not send marketing email to these customers, so they
+          may not have received their code. They are marked Not subscribed on the Claims page.
         </s-banner>
       )}
       {d.activeCampaigns === 0 && (

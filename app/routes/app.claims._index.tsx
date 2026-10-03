@@ -29,8 +29,20 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   };
 };
 
-const statusTone = { PENDING: "neutral", TRIGGERED: "info", SENT: "success", FAILED: "critical" } as const;
-const statusLabel = { PENDING: "Pending", TRIGGERED: "Flow triggered", SENT: "Sent", FAILED: "Failed" } as const;
+const statusTone = {
+  PENDING: "neutral",
+  TRIGGERED: "info",
+  SENT: "success",
+  FAILED: "critical",
+  NOT_SUBSCRIBED: "warning",
+} as const;
+const statusLabel = {
+  PENDING: "Pending",
+  TRIGGERED: "Flow triggered",
+  SENT: "Sent",
+  FAILED: "Failed",
+  NOT_SUBSCRIBED: "Not subscribed",
+} as const;
 
 export default function Claims() {
   const { claims, page, pages, total, q } = useLoaderData<typeof loader>();

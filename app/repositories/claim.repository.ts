@@ -59,13 +59,14 @@ export const claimRepository = {
     const startOfToday = new Date();
     startOfToday.setHours(0, 0, 0, 0);
     const weekAgo = new Date(Date.now() - 7 * 86400000);
-    const [total, today, last7Days, failed, lastTrigger] = await Promise.all([
+    const [total, today, last7Days, failed, notSubscribed, lastTrigger] = await Promise.all([
       db.welcomeOfferClaim.count({ where: { shopDomain } }),
       db.welcomeOfferClaim.count({ where: { shopDomain, claimedAt: { gte: startOfToday } } }),
       db.welcomeOfferClaim.count({ where: { shopDomain, claimedAt: { gte: weekAgo } } }),
       db.welcomeOfferClaim.count({ where: { shopDomain, emailStatus: "FAILED" } }),
+      db.welcomeOfferClaim.count({ where: { shopDomain, emailStatus: "NOT_SUBSCRIBED" } }),
       db.welcomeOfferClaim.aggregate({ where: { shopDomain }, _max: { flowTriggeredAt: true } }),
     ]);
-    return { total, today, last7Days, failed, lastFlowTriggeredAt: lastTrigger._max.flowTriggeredAt };
+    return { total, today, last7Days, failed, notSubscribed, lastFlowTriggeredAt: lastTrigger._max.flowTriggeredAt };
   },
 };

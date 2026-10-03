@@ -38,7 +38,12 @@ Key decisions
   `flow_triggered_at = NULL`, `email_status = FAILED`. A later submit may retry, guarded by an atomic
   compare-and-set (`UPDATE … WHERE flow_triggered_at IS NULL AND retry_lock…`). Once Flow has been
   triggered successfully the email can never be re-triggered (always "already claimed").
-- **Discount code is never returned to the storefront.** It is stored on the claim and passed to Flow only.
+- **Discount code is never returned to the storefront.** Each claim gets its own code (`<BASE>-XXXXXXXX`), added to the
+  merchant's discount before Flow fires; it is stored on the claim and passed to Flow only. A leaked code can be traced
+  to its claim and deleted on its own.
+- **Email consent.** New customers, and existing customers whose state is `NOT_SUBSCRIBED`, are subscribed
+  (single opt-in) by the popup submission. `UNSUBSCRIBED`/`PENDING`/`INVALID` are never overridden: Flow still fires,
+  and the claim is stored as `NOT_SUBSCRIBED` because Shopify Email will skip that customer.
 - Admin uses Shopify's current Polaris (web components `s-page`, `s-section`, …) which is what the
   official template ships; the legacy `@shopify/polaris` React package is deprecated.
 
@@ -51,7 +56,7 @@ Key decisions
   timestamps. Index `(shopDomain, status)`.
 - `WelcomeOfferClaim` — `id`, `shopDomain`, `campaignId → Campaign`, `shopifyCustomerId?`,
   `emailNormalized`, `discountCode`, `claimedAt`, `emailSentAt?`, `flowTriggeredAt?`,
-  `emailStatus (PENDING|TRIGGERED|SENT|FAILED)`, `createdAt`, `updatedAt`.
+  `emailStatus (PENDING|TRIGGERED|SENT|FAILED|NOT_SUBSCRIBED)`, `createdAt`, `updatedAt`.
   **`@@unique([shopDomain, campaignId, emailNormalized])`**. Indexes on `(shopDomain, claimedAt)`, `campaignId`.
 
 JSON columns keep the popup config flexible so new campaign types/templates need no migration.
@@ -82,10 +87,12 @@ docs/
 
 ## 4. Shopify scopes
 
-`read_customers,write_customers,read_discounts`
+`read_customers,write_customers,read_discounts,write_discounts`
 
 - customers: find by email, create, write `trekiva.*` metafields.
-- discounts: list/read existing native code discounts (`codeDiscountNodes`). No `write_discounts` — we never create discounts.
+- discounts: list/read existing native code discounts. `write_discounts` is used only to add each claim's own
+  redeem code (`discountRedeemCodeBulkAdd`) to the merchant's chosen discount; the app never creates or edits discounts.
+  Shopify applies `usageLimit` per code, so the merchant sets it to 1 to make every per-claim code single-use.
 - Flow trigger (`flowTriggerReceive`) and theme app extension need no scope.
 - Customer data needs Protected Customer Data access (level 2 for email) approved in the Partner Dashboard.
 

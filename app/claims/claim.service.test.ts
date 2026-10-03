@@ -1,9 +1,16 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import db from "../db.server";
 import { ClaimService } from "./claim.service";
-import { InvalidEmailError, type CustomerGateway, type FlowGateway } from "./types";
+import {
+  InvalidEmailError,
+  type CustomerGateway,
+  type DiscountCodeGateway,
+  type FlowGateway,
+} from "./types";
 
 const shop = `claim-test-${Date.now()}.myshopify.com`;
+const DISCOUNT_ID = "gid://shopify/DiscountCodeNode/1";
+const CLAIM_CODE = /^WELCOME10-[A-Z2-9]{8}$/;
 let campaignId: string;
 
 const content = {
@@ -11,8 +18,18 @@ const content = {
   alreadyClaimedMessage: "You’ve already claimed this welcome offer.",
 };
 
-function build(overrides: { flow?: FlowGateway["triggerWelcomeOfferClaimed"] } = {}) {
-  const findOrCreate = vi.fn<CustomerGateway["findOrCreate"]>(async () => "gid://shopify/Customer/1");
+function build(
+  overrides: {
+    flow?: FlowGateway["triggerWelcomeOfferClaimed"];
+    issueCode?: DiscountCodeGateway["issueCode"];
+    subscribed?: boolean;
+  } = {},
+) {
+  const findOrCreate = vi.fn<CustomerGateway["findOrCreate"]>(async () => ({
+    id: "gid://shopify/Customer/1",
+    subscribed: overrides.subscribed ?? true,
+  }));
+  const issueCode = vi.fn<DiscountCodeGateway["issueCode"]>(overrides.issueCode ?? (async () => undefined));
   const trigger = vi.fn<FlowGateway["triggerWelcomeOfferClaimed"]>(
     overrides.flow ?? (async () => undefined),
   );
@@ -20,8 +37,9 @@ function build(overrides: { flow?: FlowGateway["triggerWelcomeOfferClaimed"] } =
   const service = new ClaimService(
     { findOrCreate, writeClaimMetafields },
     { triggerWelcomeOfferClaimed: trigger },
+    { issueCode },
   );
-  return { service, findOrCreate, trigger, writeClaimMetafields };
+  return { service, findOrCreate, trigger, writeClaimMetafields, issueCode };
 }
 
 beforeEach(async () => {
@@ -32,6 +50,7 @@ beforeEach(async () => {
       shopDomain: shop,
       name: "Welcome 10% Popup",
       status: "ACTIVE",
+      discountId: DISCOUNT_ID,
       discountCode: "WELCOME10",
       content,
       design: {},
@@ -48,8 +67,8 @@ afterAll(async () => {
 });
 
 describe("ClaimService", () => {
-  it("first claim triggers Flow once and stores the claim", async () => {
-    const { service, trigger, writeClaimMetafields } = build();
+  it("first claim issues its own code, triggers Flow once and stores the claim", async () => {
+    const { service, trigger, writeClaimMetafields, issueCode } = build();
     const out = await service.claim({ shopDomain: shop, campaignId, email: "  Customer@Example.com " });
     expect(writeClaimMetafields).toHaveBeenCalledTimes(1);
     expect(out).toEqual({ status: "claimed", message: content.successMessage });
@@ -58,10 +77,56 @@ describe("ClaimService", () => {
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({
       emailNormalized: "customer@example.com",
-      discountCode: "WELCOME10",
+      discountCode: expect.stringMatching(CLAIM_CODE),
       shopifyCustomerId: "gid://shopify/Customer/1",
       emailStatus: "TRIGGERED",
     });
+    const code = rows[0].discountCode;
+    expect(issueCode).toHaveBeenCalledWith({ discountId: DISCOUNT_ID, code });
+    expect(trigger.mock.calls[0][0].discountCode).toBe(code);
+    expect(writeClaimMetafields.mock.calls[0][0].discountCode).toBe(code);
+  });
+
+  it("every claim gets a different code", async () => {
+    const { service } = build();
+    await service.claim({ shopDomain: shop, campaignId, email: "one@example.com" });
+    await service.claim({ shopDomain: shop, campaignId, email: "two@example.com" });
+    const codes = (await db.welcomeOfferClaim.findMany({ where: { shopDomain: shop } })).map((r) => r.discountCode);
+    expect(new Set(codes).size).toBe(2);
+  });
+
+  it("an opted-out customer still triggers Flow but is marked NOT_SUBSCRIBED", async () => {
+    const { service, trigger } = build({ subscribed: false });
+    const out = await service.claim({ shopDomain: shop, campaignId, email: "optout@example.com" });
+    expect(out.status).toBe("claimed");
+    expect(trigger).toHaveBeenCalledTimes(1);
+    const row = await db.welcomeOfferClaim.findFirstOrThrow({ where: { shopDomain: shop } });
+    expect(row.emailStatus).toBe("NOT_SUBSCRIBED");
+    expect(row.flowTriggeredAt).not.toBeNull();
+
+    // Flow already fired, so a resubmission is not retried.
+    const again = await service.claim({ shopDomain: shop, campaignId, email: "optout@example.com" });
+    expect(again.status).toBe("already_claimed");
+    expect(trigger).toHaveBeenCalledTimes(1);
+  });
+
+  it("a failed code issue skips Flow and the retry reuses the same code", async () => {
+    let fail = true;
+    const { service, trigger, issueCode } = build({
+      issueCode: async () => {
+        if (fail) throw new Error("discounts down");
+      },
+    });
+    await expect(service.claim({ shopDomain: shop, campaignId, email: "y@example.com" })).rejects.toThrow();
+    expect(trigger).not.toHaveBeenCalled();
+    const row = await db.welcomeOfferClaim.findFirstOrThrow({ where: { shopDomain: shop } });
+    expect(row.emailStatus).toBe("FAILED");
+
+    fail = false;
+    const out = await service.claim({ shopDomain: shop, campaignId, email: "y@example.com" });
+    expect(out.status).toBe("claimed");
+    expect(issueCode).toHaveBeenLastCalledWith({ discountId: DISCOUNT_ID, code: row.discountCode });
+    expect(trigger.mock.calls[0][0].discountCode).toBe(row.discountCode);
   });
 
   it("same email (any casing) is already_claimed: no Flow, no new row", async () => {

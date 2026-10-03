@@ -2,6 +2,7 @@ import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import db from "../db.server";
 import { logger } from "../utils/logger.server";
+import { generateClaimCode } from "../discounts/redeem-codes.server";
 import { normalizeEmail } from "./email";
 import {
   CampaignUnavailableError,
@@ -9,6 +10,7 @@ import {
   type ClaimContext,
   type ClaimOutcome,
   type CustomerGateway,
+  type DiscountCodeGateway,
   type FlowGateway,
 } from "./types";
 
@@ -20,6 +22,7 @@ export class ClaimService {
   constructor(
     private readonly customers: CustomerGateway,
     private readonly flow: FlowGateway,
+    private readonly discountCodes: DiscountCodeGateway,
   ) {}
 
   /**
@@ -35,7 +38,8 @@ export class ClaimService {
     const campaign = await db.campaign.findFirst({
       where: { id: campaignId, shopDomain, status: "ACTIVE" },
     });
-    if (!campaign?.discountCode) throw new CampaignUnavailableError();
+    if (!campaign?.discountCode || !campaign.discountId) throw new CampaignUnavailableError();
+    const discountId = campaign.discountId;
 
     const content = campaign.content as { successMessage: string; alreadyClaimedMessage: string };
     const claimed: ClaimOutcome = { status: "claimed", message: content.successMessage };
@@ -43,17 +47,19 @@ export class ClaimService {
 
     let claimId: string;
     let claimedAt: Date;
+    let code: string;
     try {
       const row = await db.welcomeOfferClaim.create({
         data: {
           shopDomain,
           campaignId,
           emailNormalized: normalized,
-          discountCode: campaign.discountCode,
+          discountCode: generateClaimCode(campaign.discountCode),
         },
       });
       claimId = row.id;
       claimedAt = row.claimedAt;
+      code = row.discountCode;
     } catch (e) {
       if (!(e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002")) throw e;
 
@@ -84,30 +90,40 @@ export class ClaimService {
       if (lock.count !== 1) return already;
       claimId = existing.id;
       claimedAt = existing.claimedAt;
+      // A retry reuses the stored code; issueCode is a no-op if it already reached Shopify.
+      code = existing.discountCode;
     }
 
     try {
-      const customerId = await this.customers.findOrCreate({ email: normalized });
+      const customer = await this.customers.findOrCreate({ email: normalized });
+      const customerId = customer.id;
       await db.welcomeOfferClaim.update({
         where: { id: claimId },
         data: { shopifyCustomerId: customerId },
       });
+      // The code must be redeemable before Flow emails it.
+      await this.discountCodes.issueCode({ discountId, code });
       await this.flow.triggerWelcomeOfferClaimed({
         shopDomain,
         email: normalized,
         campaignName: campaign.name,
-        discountCode: campaign.discountCode,
+        discountCode: code,
         claimedAt,
         customerId,
       });
+      // Flow still fires for opted-out customers (the merchant's workflow may use another email
+      // action), but Shopify Email will skip them, so the claim records it for the merchant.
       await db.welcomeOfferClaim.update({
         where: { id: claimId },
-        data: { flowTriggeredAt: new Date(), emailStatus: "TRIGGERED" },
+        data: {
+          flowTriggeredAt: new Date(),
+          emailStatus: customer.subscribed ? "TRIGGERED" : "NOT_SUBSCRIBED",
+        },
       });
       // After Flow: a metafield problem must never affect the claim outcome.
       await this.customers.writeClaimMetafields({
         customerId,
-        discountCode: campaign.discountCode,
+        discountCode: code,
         claimedAt,
       });
     } catch (err) {

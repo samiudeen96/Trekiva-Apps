@@ -8,7 +8,7 @@ import { PrismaSessionStorage } from "@shopify/shopify-app-session-storage-prism
 import prisma from "./db.server";
 import { env } from "./utils/env.server";
 
-export const apiVersion = ApiVersion.October25;
+export const apiVersion = ApiVersion.October26;
 
 const shopify = shopifyApp({
   apiKey: env.SHOPIFY_API_KEY,
@@ -18,7 +18,7 @@ const shopify = shopifyApp({
   appUrl: env.SHOPIFY_APP_URL,
   authPathPrefix: "/auth",
   sessionStorage: new PrismaSessionStorage(prisma),
-  distribution: AppDistribution.AppStore,
+  distribution: AppDistribution.SingleMerchant,
   future: {
     expiringOfflineAccessTokens: true,
   },

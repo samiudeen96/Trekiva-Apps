@@ -45,11 +45,13 @@ Then `shopify app deploy`. This registers webhooks, the app proxy, the **Welcome
 
 ## 4. Merchant setup (once per store)
 1. Install the app. Open **Settings**: every row should be OK (Flow shows "No trigger fired yet" until the first claim).
-2. Shopify Admin → Discounts: have a code discount (e.g. `WELCOME10`) with **one use per customer**.
+2. Shopify Admin → Discounts: have a code discount (e.g. `WELCOME10`) with **one use per customer** and eligibility **All customers**.
 3. **Online Store → Themes → Customize → App embeds**: enable **Trekiva Popup**.
-4. Shopify Flow: create a workflow with trigger **Welcome Offer Claimed** → action **Send marketing email** (Shopify Email), using the Discount code variable. Turn it on.
-5. Create a campaign, select the discount, set status **Active**, save.
-6. Test with a fresh email: expect the success message and the email. Submit again: expect "Already claimed" and no second email.
+4. On the campaign's discount in Shopify Admin, set **Limit number of times this discount can be used in total** to 1
+   (applies to each per-claim code) and keep the base code private.
+5. Shopify Flow: create a workflow with trigger **Welcome Offer Claimed** → action **Send marketing email** (Shopify Email), using the Discount code variable. Turn it on.
+6. Create a campaign, select the discount, set status **Active**, save.
+7. Test with a fresh email: expect the success message and an email with a unique code (e.g. `WELCOME10-7KQ2M9XH`). Submit again: expect "Already claimed" and no second email.
 
 ## 5. Operations
 - Health: `GET /healthz` (checks the database). Docker marks `trekiva-app` unhealthy if it fails.

@@ -28,7 +28,7 @@ services:
       SHOPIFY_API_KEY: ${SHOPIFY_API_KEY:?}
       SHOPIFY_API_SECRET: ${SHOPIFY_API_SECRET:?}
       SHOPIFY_APP_URL: ${SHOPIFY_APP_URL:?}
-      SCOPES: ${SCOPES:-read_customers,write_customers,read_discounts}
+      SCOPES: ${SCOPES:-read_customers,write_customers,read_discounts,write_discounts}
       # Use a URL-safe POSTGRES_PASSWORD (e.g. `openssl rand -hex 24`).
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?schema=public
       LOG_LEVEL: ${LOG_LEVEL:-info}

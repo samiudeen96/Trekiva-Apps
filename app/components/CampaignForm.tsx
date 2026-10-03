@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigation, useSubmit } from "react-router";
+import { claimCodePrefix } from "../discounts/claim-code";
 import type { DiscountSummary } from "../discounts/types";
 import type { CampaignInput, CampaignContent } from "../campaigns/schema";
 import { parseCampaignForm, type FieldErrors } from "../campaigns/form";
@@ -186,6 +187,11 @@ export function CampaignForm({ initial, errors = {}, heading, discounts }: Props
                   <s-heading>{selected.code}</s-heading>
                   <s-text>{selected.valueLabel}</s-text>
                   <s-text>Status: {selected.status.toLowerCase()}</s-text>
+                  <s-text>
+                    Each claim gets its own code, such as {claimCodePrefix(selected.code)}-7KQ2M9XH.
+                    The base code {selected.code} also works, so don&apos;t publish it.
+                  </s-text>
+                  <s-text>Uses per code: {selected.usageLimit ?? "Unlimited"}</s-text>
                   <s-text>One use per customer: {selected.oncePerCustomer ? "Yes" : "No"}</s-text>
                   <s-text>Eligibility: {selected.eligibility}</s-text>
                   <s-text>Minimum purchase: {selected.minimumRequirement}</s-text>
@@ -256,6 +262,11 @@ export function CampaignForm({ initial, errors = {}, heading, discounts }: Props
               email, campaign name, discount code, claimed at.
             </s-text>
             <s-text>4. Turn the workflow on.</s-text>
+            <s-text color="subdued">
+              Submitting the popup subscribes new customers and customers who never chose, so make sure
+              your privacy text says they will receive marketing emails. Customers who unsubscribed
+              earlier stay unsubscribed; Shopify Email skips them and their claim shows Not subscribed.
+            </s-text>
           </s-stack>
         </s-section>
         <s-section heading="8. Preview">
