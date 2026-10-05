@@ -101,7 +101,8 @@
     wrap.appendChild(form);
     if (c.content.privacyText) wrap.appendChild(el("p", "tkv-privacy", c.content.privacyText));
 
-    function fail(msg) { error.textContent = msg; error.hidden = false; input.focus(); }
+    function fail(msg) { error.textContent = msg; error.hidden = false; input.setAttribute("aria-invalid", "true"); input.focus(); }
+    input.addEventListener("input", function () { input.removeAttribute("aria-invalid"); error.hidden = true; });
 
     var busy = false;
     form.addEventListener("submit", function (e) {
@@ -110,6 +111,7 @@
       var email = input.value.trim();
       if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return fail("Please enter a valid email address.");
       error.hidden = true;
+      input.removeAttribute("aria-invalid");
       busy = true;
       btn.disabled = true;
       var label = btn.textContent;
@@ -145,12 +147,13 @@
   function resultView(c, status, message) {
     var wrap = el("div", "tkv-state");
     var isNew = status === "claimed";
+    wrap.appendChild(el("span", "tkv-badge")).setAttribute("aria-hidden", "true");
     var h = el("h2", "tkv-title", isNew ? c.content.successTitle : c.content.alreadyClaimedTitle);
     h.id = "tkv-title";
     h.tabIndex = -1;
     wrap.appendChild(h);
     wrap.appendChild(el("p", "tkv-desc", message || (isNew ? c.content.successMessage : c.content.alreadyClaimedMessage)));
-    var close = el("button", "tkv-btn", "Close");
+    var close = el("button", "tkv-btn", "Continue shopping");
     close.type = "button";
     close.addEventListener("click", closePopup);
     wrap.appendChild(close);
@@ -181,6 +184,7 @@
     s.setProperty("--tkv-align", d.alignment);
 
     var tpl = c.template;
+    if (d.alignment === "center") dialog.classList.add("tkv-align-center");
     dialog.classList.add(tpl === "CENTERED_MINIMAL" ? "tkv-centered" : tpl === "IMAGE_BANNER" ? "tkv-banner" : "tkv-split");
 
     var body = el("div", "tkv-body");
@@ -215,7 +219,7 @@
     }));
 
     if (d.showCloseIcon) {
-      var x = el("button", "tkv-close", "\u00d7");
+      var x = el("button", "tkv-close"); // the cross is drawn in CSS
       x.type = "button";
       x.setAttribute("aria-label", "Close");
       x.addEventListener("click", closePopup);

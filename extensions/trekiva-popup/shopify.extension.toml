@@ -1,4 +1,5 @@
 api_version = "2026-10"
+uid = "e9e22265-c639-1700-af9e-d90b345b1b01b575564f"
 
 [[extensions]]
 name = "Trekiva Popup"

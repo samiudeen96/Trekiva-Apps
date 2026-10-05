@@ -1,3 +1,4 @@
+uid = "bcb8d8b7-0203-1bde-6652-8618e7eeee58a2a64aa3"
 [[extensions]]
 name = "Welcome Offer Claimed"
 type = "flow_trigger"
