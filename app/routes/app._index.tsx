@@ -28,23 +28,55 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       id: c.id,
       email: c.emailNormalized,
       campaign: c.campaign.name,
+      status: c.emailStatus,
       claimedAt: c.claimedAt.toISOString(),
     })),
   };
 };
 
+const statusTone = {
+  PENDING: "neutral",
+  TRIGGERED: "info",
+  SENT: "success",
+  FAILED: "critical",
+  NOT_SUBSCRIBED: "warning",
+} as const;
+const statusLabel = {
+  PENDING: "Pending",
+  TRIGGERED: "Flow triggered",
+  SENT: "Sent",
+  FAILED: "Failed",
+  NOT_SUBSCRIBED: "Not subscribed",
+} as const;
+
+function timeAgo(iso: string): string {
+  const s = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 1000));
+  if (s < 60) return "just now";
+  if (s < 3600) return `${Math.floor(s / 60)} min ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)} h ago`;
+  return `${Math.floor(s / 86400)} d ago`;
+}
+
 export default function Dashboard() {
   const d = useLoaderData<typeof loader>();
   const tiles = [
-    ["Total campaigns", d.totalCampaigns],
-    ["Active campaigns", d.activeCampaigns],
-    ["Total claims", d.totalClaims],
-    ["Claims today", d.claimsToday],
-    ["Claims, last 7 days", d.claimsLast7Days],
+    { label: "Total claims", value: d.totalClaims, icon: "discount", tone: "success" },
+    { label: "Claims today", value: d.claimsToday, icon: "calendar", tone: "info" },
+    { label: "Last 7 days", value: d.claimsLast7Days, icon: "chart-line", tone: "info" },
+    { label: "Active campaigns", value: `${d.activeCampaigns} / ${d.totalCampaigns}`, icon: "megaphone", tone: "auto" },
+  ] as const;
+  const actions = [
+    { label: "Create campaign", detail: "Design a new popup", icon: "plus-circle", href: "/app/campaigns/new" },
+    { label: "Campaigns", detail: "Edit, activate or pause", icon: "layout-popup", href: "/app/campaigns" },
+    { label: "Claims", detail: "Search and export claims", icon: "email", href: "/app/claims" },
+    { label: "Settings", detail: "Check Flow and connections", icon: "settings", href: "/app/settings" },
   ] as const;
 
   return (
     <s-page heading="Trekiva">
+      <s-button slot="primary-action" variant="primary" icon="plus" href="/app/campaigns/new">
+        Create campaign
+      </s-button>
       {d.failedClaims > 0 && (
         <s-banner tone="critical" heading={`${d.failedClaims} claim(s) did not reach Shopify Flow`}>
           Those customers did not get their email yet. They will be retried automatically when they submit
@@ -62,28 +94,68 @@ export default function Dashboard() {
           The popup is not showing on your store. Create a campaign and set its status to Active.
         </s-banner>
       )}
-      <s-section heading="Overview">
-        <s-grid gridTemplateColumns="repeat(auto-fit, minmax(160px, 1fr))" gap="base">
-          {tiles.map(([label, value]) => (
-            <s-box key={label} padding="base" borderWidth="base" borderRadius="base">
-              <s-stack gap="small-200">
-                <s-text color="subdued">{label}</s-text>
-                <s-heading>{value}</s-heading>
+
+      <s-section>
+        <s-grid gridTemplateColumns="repeat(auto-fit, minmax(190px, 1fr))" gap="base">
+          {tiles.map((t) => (
+            <s-box key={t.label} padding="base" background="subdued" borderWidth="base" borderRadius="large">
+              <s-stack gap="base">
+                <s-stack direction="inline" gap="small-200" alignItems="center">
+                  <s-icon type={t.icon} tone={t.tone} />
+                  <s-text color="subdued">{t.label}</s-text>
+                </s-stack>
+                <s-heading>{t.value}</s-heading>
               </s-stack>
             </s-box>
           ))}
         </s-grid>
       </s-section>
+
+      <s-section heading="Quick actions">
+        <s-grid gridTemplateColumns="repeat(auto-fit, minmax(220px, 1fr))" gap="base">
+          {actions.map((a) => (
+            <s-clickable key={a.label} href={a.href} border="base" borderRadius="large" padding="base">
+              <s-stack direction="inline" gap="base" alignItems="center">
+                <s-icon type={a.icon} />
+                <s-stack gap="none">
+                  <s-text type="strong">{a.label}</s-text>
+                  <s-text color="subdued">{a.detail}</s-text>
+                </s-stack>
+              </s-stack>
+            </s-clickable>
+          ))}
+        </s-grid>
+      </s-section>
+
       <s-section heading="Recent claims">
         {d.recent.length === 0 ? (
-          <s-text color="subdued">No claims yet.</s-text>
+          <s-stack gap="small-200" alignItems="center">
+            <s-icon type="email-follow-up" tone="info" size="base" />
+            <s-text type="strong">No claims yet</s-text>
+            <s-text color="subdued">Claims show up here as soon as a visitor submits the popup.</s-text>
+          </s-stack>
         ) : (
-          <s-stack gap="small-200">
-            {d.recent.map((c) => (
-              <s-text key={c.id}>
-                {c.email} · {c.campaign} · {new Date(c.claimedAt).toLocaleString()}
-              </s-text>
-            ))}
+          <s-stack gap="base">
+            <s-table>
+              <s-table-header-row>
+                <s-table-header listSlot="primary">Email</s-table-header>
+                <s-table-header>Campaign</s-table-header>
+                <s-table-header>Claimed</s-table-header>
+                <s-table-header>Email status</s-table-header>
+              </s-table-header-row>
+              <s-table-body>
+                {d.recent.map((c) => (
+                  <s-table-row key={c.id}>
+                    <s-table-cell>{c.email}</s-table-cell>
+                    <s-table-cell>{c.campaign}</s-table-cell>
+                    <s-table-cell>{timeAgo(c.claimedAt)}</s-table-cell>
+                    <s-table-cell>
+                      <s-badge tone={statusTone[c.status]}>{statusLabel[c.status]}</s-badge>
+                    </s-table-cell>
+                  </s-table-row>
+                ))}
+              </s-table-body>
+            </s-table>
             <s-link href="/app/claims">View all claims</s-link>
           </s-stack>
         )}
