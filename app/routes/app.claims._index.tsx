@@ -31,14 +31,12 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
 const statusTone = {
   PENDING: "neutral",
-  TRIGGERED: "info",
   SENT: "success",
   FAILED: "critical",
   NOT_SUBSCRIBED: "warning",
 } as const;
 const statusLabel = {
   PENDING: "Pending",
-  TRIGGERED: "Flow triggered",
   SENT: "Sent",
   FAILED: "Failed",
   NOT_SUBSCRIBED: "Not subscribed",

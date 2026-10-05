@@ -20,6 +20,18 @@ const schema = z.object({
     .enum(["silent", "fatal", "error", "warn", "info", "debug", "trace"])
     .default("info"),
   CLAIM_RATE_LIMIT_PER_MIN: z.coerce.number().int().positive().default(10),
+  // Resend delivers the welcome-offer email (Shopify Flow is Plus-only for custom apps).
+  RESEND_API_KEY: z.string().min(1),
+  // RFC 5322 sender on a domain verified in Resend, e.g. "Trekiva <offers@trekiva.com>".
+  EMAIL_FROM: z.string().min(3),
+  EMAIL_REPLY_TO: z.string().email().optional(),
+  // https image shown at the top of the email; "" for none. Use JPG/PNG: Outlook cannot render webp.
+  EMAIL_LOGO_URL: z
+    .string()
+    .default(
+      "https://cdn.shopify.com/s/files/1/0757/5928/8474/files/brand_banner.webp?v=1789714241&format=jpg",
+    )
+    .refine((v) => v === "" || /^https:\/\//i.test(v), "EMAIL_LOGO_URL must be an https URL"),
 });
 
 export type Env = z.infer<typeof schema>;

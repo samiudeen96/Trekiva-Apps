@@ -13,12 +13,12 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     claimRepository.stats(session.shop),
   ]);
 
-  // Shopify offers no API to confirm a Flow workflow is switched on, so report evidence instead.
-  const flow: Check = stats.failed > 0
-    ? { ok: false, detail: `${stats.failed} claim(s) failed before Flow was triggered` }
-    : stats.lastFlowTriggeredAt
-      ? { ok: true, detail: `Last trigger fired ${stats.lastFlowTriggeredAt.toISOString()}` }
-      : { ok: true, detail: "No trigger fired yet. Create the Flow workflow, then submit a test email." };
+  // Resend reports delivery asynchronously, so report the app's own send evidence instead.
+  const email: Check = stats.failed > 0
+    ? { ok: false, detail: `${stats.failed} claim(s) failed before the email was sent` }
+    : stats.lastEmailSentAt
+      ? { ok: true, detail: `Last email sent ${stats.lastEmailSentAt.toISOString()}` }
+      : { ok: true, detail: "No email sent yet. Submit a test email through the popup." };
 
   return {
     shop: session.shop,
@@ -28,7 +28,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       ["Shopify connection", shopifyChecks.shopify],
       ["Granted scopes", shopifyChecks.scopes],
       ["Database", database],
-      ["Shopify Flow", flow],
+      ["Email delivery (Resend)", email],
     ] as [string, Check][],
   };
 };

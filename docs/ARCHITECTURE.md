@@ -18,12 +18,12 @@ Trekiva Discount  (React Router 7 + Node 22 + TypeScript strict)  ── Nginx/T
        ├─ services/claims      ClaimService (idempotent, DB-enforced)
        ├─ services/campaigns   CampaignService / validation / public serialisation
        ├─ shopify/             admin GraphQL clients (customers, discounts, metafields)
-       ├─ flow/                flowTriggerReceive wrapper
+       ├─ email/               Resend client + welcome-offer template
        └─ repositories/        Prisma access only
        ▼
 PostgreSQL (private docker network, persistent volume)  ← source of truth for claims
        ▼
-Shopify Flow trigger "Welcome Offer Claimed" → Flow → Shopify Email (sends the code)
+Resend API → welcome-offer email (carries the claim's single-use code)
 ```
 
 Key decisions
@@ -33,17 +33,18 @@ Key decisions
 - **PostgreSQL decides who has claimed.** The claim row is inserted *first*; the
   `UNIQUE(shop_domain, campaign_id, email_normalized)` constraint (Prisma `P2002`) is the only
   arbiter. No read-then-write race.
-- **Flow is fired only by the request that wins the insert.** Flow never does dedup.
-- **Failure policy.** If Shopify customer/Flow steps fail after the insert, the claim stays with
-  `flow_triggered_at = NULL`, `email_status = FAILED`. A later submit may retry, guarded by an atomic
-  compare-and-set (`UPDATE … WHERE flow_triggered_at IS NULL AND retry_lock…`). Once Flow has been
-  triggered successfully the email can never be re-triggered (always "already claimed").
+- **The email is sent only by the request that wins the insert.** Delivery never does dedup.
+- **Failure policy.** If the Shopify customer/discount/email steps fail after the insert, the claim stays
+  with `email_sent_at = NULL`, `email_status = FAILED`. A later submit may retry, guarded by an atomic
+  compare-and-set (`UPDATE … WHERE email_sent_at IS NULL AND retry_lock…`). Once the email has been sent
+  it can never be re-sent (always "already claimed"); the send also carries the claim id as a Resend
+  idempotency key, so a crash between the send and the status write cannot duplicate it.
 - **Discount code is never returned to the storefront.** Each claim gets its own code (`<BASE>-XXXXXXXX`), added to the
-  merchant's discount before Flow fires; it is stored on the claim and passed to Flow only. A leaked code can be traced
-  to its claim and deleted on its own.
+  merchant's discount before the email goes out; it is stored on the claim and sent to that customer only. A leaked
+  code can be traced to its claim and deleted on its own.
 - **Email consent.** New customers, and existing customers whose state is `NOT_SUBSCRIBED`, are subscribed
-  (single opt-in) by the popup submission. `UNSUBSCRIBED`/`PENDING`/`INVALID` are never overridden: Flow still fires,
-  and the claim is stored as `NOT_SUBSCRIBED` because Shopify Email will skip that customer.
+  (single opt-in) by the popup submission. `UNSUBSCRIBED`/`PENDING`/`INVALID` are never overridden: no marketing
+  email is sent to those customers and the claim is stored as `NOT_SUBSCRIBED`.
 - Admin uses Shopify's current Polaris (web components `s-page`, `s-section`, …) which is what the
   official template ships; the legacy `@shopify/polaris` React package is deprecated.
 
@@ -55,8 +56,8 @@ Key decisions
   `content Json`, `design Json`, `rules Json` (all validated by zod; versioned by `schemaVersion`),
   timestamps. Index `(shopDomain, status)`.
 - `WelcomeOfferClaim` — `id`, `shopDomain`, `campaignId → Campaign`, `shopifyCustomerId?`,
-  `emailNormalized`, `discountCode`, `claimedAt`, `emailSentAt?`, `flowTriggeredAt?`,
-  `emailStatus (PENDING|TRIGGERED|SENT|FAILED|NOT_SUBSCRIBED)`, `createdAt`, `updatedAt`.
+  `emailNormalized`, `discountCode`, `claimedAt`, `emailSentAt?` (non-null = point of no return),
+  `emailStatus (PENDING|SENT|FAILED|NOT_SUBSCRIBED)`, `createdAt`, `updatedAt`.
   **`@@unique([shopDomain, campaignId, emailNormalized])`**. Indexes on `(shopDomain, claimedAt)`, `campaignId`.
 
 JSON columns keep the popup config flexible so new campaign types/templates need no migration.
@@ -71,7 +72,7 @@ app/
   claims/            ClaimService, email normalisation, errors
   discounts/         fetch + map Shopify native discounts
   shopify/           admin client helpers, customers, metafields
-  flow/              flowTriggerReceive wrapper
+  email/             Resend client + welcome-offer template
   repositories/      Prisma repositories
   validation/        shared zod schemas, input sanitising
   utils/             logger, env, rate-limit, http helpers
@@ -80,7 +81,6 @@ app/
 prisma/schema.prisma, prisma/migrations
 extensions/
   trekiva-popup/     theme app extension (app embed block + assets)
-  welcome-offer-flow-trigger/   flow trigger extension
 deploy/              nginx.conf, compose helpers
 docs/
 ```
@@ -93,19 +93,28 @@ docs/
 - discounts: list/read existing native code discounts. `write_discounts` is used only to add each claim's own
   redeem code (`discountRedeemCodeBulkAdd`) to the merchant's chosen discount; the app never creates or edits discounts.
   Shopify applies `usageLimit` per code, so the merchant sets it to 1 to make every per-claim code single-use.
-- Flow trigger (`flowTriggerReceive`) and theme app extension need no scope.
+- The theme app extension needs no scope.
 - Customer data needs Protected Customer Data access (level 2 for email) approved in the Partner Dashboard.
 
-## 5. Shopify Flow architecture
+## 5. Email delivery architecture
 
-- Extension `flow_trigger` with handle `welcome-offer-claimed`, title **Welcome Offer Claimed**.
-- Fields: `customer_id` (customer_reference), `customer_email` (single_line_text), `campaign_name`,
-  `discount_code`, `claimed_at` (single_line_text, ISO-8601).
-- App calls `flowTriggerReceive(handle, payload)` once, only from the first-claim path.
-- Merchant builds the Flow once: *Welcome Offer Claimed → Send marketing email (Shopify Email)* using
-  `{{discount_code}}`. Instructions shown on the editor's "Shopify Flow" step.
-- `email_sent_at` / `SENT` status cannot be observed from Flow; status is `TRIGGERED` after trigger success
-  (Flow's "Send HTTP request" action can optionally call back to mark `SENT`).
+- The app sends the welcome email itself, through Resend's REST API (`POST https://api.resend.com/emails`).
+  No SDK: `app/email/email.server.ts` is a `fetch` wrapper behind the `EmailGateway` interface.
+- Config is server-side env: `RESEND_API_KEY`, `EMAIL_FROM` (RFC 5322, domain verified in Resend),
+  optional `EMAIL_REPLY_TO`.
+- Sent once, only from the first-claim path, and only when the customer is email-marketing subscribed.
+- The email renders the claim's code in both an HTML and a plain-text part. `campaignName` is the
+  merchant's internal label, so it is deliberately never shown to the customer; the greeting uses the
+  display name parsed out of `EMAIL_FROM`.
+- `email_sent_at` + `SENT` are written after Resend accepts the message. Resend reports actual delivery
+  asynchronously via its own webhooks, which the app does not consume today.
+
+### Why not Shopify Flow
+The original design fired a `flow_trigger` extension (**Welcome Offer Claimed**) and let the merchant
+wire *trigger → Send marketing email (Shopify Email)*. Shopify only exposes Flow app extensions from a
+**custom-distribution app to Shopify Plus stores**, so on a non-Plus store the trigger never appears in
+Flow's trigger picker. Keeping Flow would have required public (listed or unlisted) distribution and App
+Store review. Sending directly removes that constraint and the merchant setup step with it.
 
 ## 6. Theme App Extension architecture
 
@@ -148,7 +157,7 @@ POSTGRES_USER/PASSWORD/DB (compose), LOG_LEVEL, CLAIM_RATE_LIMIT_PER_MIN, SHOP_C
 3. Discount selector (Admin GraphQL)
 4. Claim API + duplicate protection
 5. Shopify customer integration + metafields
-6. Flow trigger extension
+6. Email delivery (Resend)
 7. Theme app extension popup
 8. Templates + editor/preview
 9. Dashboard + claims analytics

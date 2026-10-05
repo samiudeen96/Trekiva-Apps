@@ -33,6 +33,9 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?schema=public
       LOG_LEVEL: ${LOG_LEVEL:-info}
       CLAIM_RATE_LIMIT_PER_MIN: ${CLAIM_RATE_LIMIT_PER_MIN:-10}
+      RESEND_API_KEY: ${RESEND_API_KEY:?set RESEND_API_KEY in .env}
+      EMAIL_FROM: ${EMAIL_FROM:?set EMAIL_FROM in .env}
+      EMAIL_REPLY_TO: ${EMAIL_REPLY_TO:-}
       PORT: "3000"
     # Not published by default (nginx reaches it internally). On Elestio's managed proxy
     # set APP_BIND (see docs/DEPLOYMENT.md) and start without the nginx service.

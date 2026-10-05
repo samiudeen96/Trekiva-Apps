@@ -14,6 +14,10 @@ export const contentSchema = z.object({
   alreadyClaimedTitle: text(120),
   alreadyClaimedMessage: text(400),
   privacyText: optionalText(300),
+  // Welcome email. Placeholders: {{code}} and {{brand}}. Never sent to the storefront.
+  emailSubject: text(150),
+  emailHeading: text(120),
+  emailBody: optionalText(1500),
 });
 
 export const designSchema = z.object({

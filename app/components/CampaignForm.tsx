@@ -4,7 +4,9 @@ import { claimCodePrefix } from "../discounts/claim-code";
 import type { DiscountSummary } from "../discounts/types";
 import type { CampaignInput, CampaignContent } from "../campaigns/schema";
 import { parseCampaignForm, type FieldErrors } from "../campaigns/form";
+import type { EmailBranding } from "../email/template";
 import { CampaignPreview } from "./CampaignPreview";
+import { EmailPreview } from "./EmailPreview";
 
 interface Props {
   initial: CampaignInput;
@@ -12,6 +14,8 @@ interface Props {
   heading: string;
   /** null when Shopify could not be reached */
   discounts: DiscountSummary[] | null;
+  /** Brand name and logo the welcome email is rendered with. */
+  emailBranding: EmailBranding;
 }
 
 const contentFields: [keyof CampaignContent, string, boolean][] = [
@@ -43,7 +47,7 @@ function readForm(form: HTMLFormElement): FormData {
   return fd;
 }
 
-export function CampaignForm({ initial, errors = {}, heading, discounts }: Props) {
+export function CampaignForm({ initial, errors = {}, heading, discounts, emailBranding }: Props) {
   const formRef = useRef<HTMLFormElement>(null);
   const submit = useSubmit();
   const [discountId, setDiscountId] = useState(initial.discountId ?? "");
@@ -248,24 +252,30 @@ export function CampaignForm({ initial, errors = {}, heading, discounts }: Props
           </s-stack>
         </s-section>
 
-        <s-section heading="7. Shopify Flow">
+        <s-section heading="7. Email delivery">
           <s-stack gap="small-200">
             <s-text>
-              Trekiva fires the <s-text type="strong">Welcome Offer Claimed</s-text> trigger once per
-              first-time claim. Duplicate prevention happens in Trekiva, so your Flow does not need any
-              checks for it.
+              Trekiva emails the discount code itself, once per first-time claim. Each claim gets its
+              own single-use code, so nothing needs to be set up in Shopify Flow.
             </s-text>
-            <s-text>1. In Shopify Flow, create a workflow and choose the trigger Welcome Offer Claimed.</s-text>
-            <s-text>2. Add the action Send marketing email (Shopify Email) to the customer.</s-text>
-            <s-text>
-              3. In the email, insert the Flow variable for Discount code. Available data: customer, customer
-              email, campaign name, discount code, claimed at.
+            <s-text-field name="content.emailSubject" label="Email subject" value={content.emailSubject} error={err("content.emailSubject")} />
+            <s-text-field name="content.emailHeading" label="Email heading" value={content.emailHeading} error={err("content.emailHeading")} />
+            <s-text-area name="content.emailBody" label="Email message" rows={4} value={content.emailBody} error={err("content.emailBody")} details="Leave a blank line between paragraphs." />
+            <s-text color="subdued">
+              Use {"{{code}}"} for the customer&apos;s discount code and {"{{brand}}"} for your store name.
+              The code box and the single-use note are always included.
             </s-text>
-            <s-text>4. Turn the workflow on.</s-text>
+            <EmailPreview content={preview.content} branding={emailBranding} />
+            <s-text color="subdued">
+              The sender address, logo and Resend API key are configured on the server
+              (<s-text type="strong">EMAIL_FROM</s-text>, <s-text type="strong">EMAIL_LOGO_URL</s-text> and{" "}
+              <s-text type="strong">RESEND_API_KEY</s-text>). The sending domain must be verified in Resend
+              or delivery is rejected.
+            </s-text>
             <s-text color="subdued">
               Submitting the popup subscribes new customers and customers who never chose, so make sure
               your privacy text says they will receive marketing emails. Customers who unsubscribed
-              earlier stay unsubscribed; Shopify Email skips them and their claim shows Not subscribed.
+              earlier stay unsubscribed: Trekiva does not email them and their claim shows Not subscribed.
             </s-text>
           </s-stack>
         </s-section>

@@ -41,17 +41,18 @@ Edit `shopify.app.toml` with the real values (from the project directory, on you
 - `[auth] redirect_urls = ["https://trekiva-app.example.com/auth/callback"]`
 - `[app_proxy] url = "https://trekiva-app.example.com/api/public"` (subpath `trekiva`, prefix `apps`)
 
-Then `shopify app deploy`. This registers webhooks, the app proxy, the **Welcome Offer Claimed** Flow trigger and the theme app extension. If deploy rejects the Flow trigger field keys, adjust them in `extensions/welcome-offer-flow-trigger/shopify.extension.toml` and `app/flow/flow.server.ts` together.
+Then `shopify app deploy`. This registers webhooks, the app proxy and the theme app extension.
+
+The welcome email is sent by the app through Resend, not by Shopify, so it needs no Shopify config: verify the sending domain at https://resend.com/domains and set `RESEND_API_KEY` and `EMAIL_FROM` in `.env` before starting the stack.
 
 ## 4. Merchant setup (once per store)
-1. Install the app. Open **Settings**: every row should be OK (Flow shows "No trigger fired yet" until the first claim).
+1. Install the app. Open **Settings**: every row should be OK (email delivery shows "No email sent yet" until the first claim).
 2. Shopify Admin → Discounts: have a code discount (e.g. `WELCOME10`) with **one use per customer** and eligibility **All customers**.
 3. **Online Store → Themes → Customize → App embeds**: enable **Trekiva Popup**.
 4. On the campaign's discount in Shopify Admin, set **Limit number of times this discount can be used in total** to 1
    (applies to each per-claim code) and keep the base code private.
-5. Shopify Flow: create a workflow with trigger **Welcome Offer Claimed** → action **Send marketing email** (Shopify Email), using the Discount code variable. Turn it on.
-6. Create a campaign, select the discount, set status **Active**, save.
-7. Test with a fresh email: expect the success message and an email with a unique code (e.g. `WELCOME10-7KQ2M9XH`). Submit again: expect "Already claimed" and no second email.
+5. Create a campaign, select the discount, set status **Active**, save.
+6. Test with a fresh email: expect the success message and an email with a unique code (e.g. `WELCOME10-7KQ2M9XH`). Submit again: expect "Already claimed" and no second email.
 
 ## 5. Operations
 - Health: `GET /healthz` (checks the database). Docker marks `trekiva-app` unhealthy if it fails.
@@ -62,4 +63,5 @@ Then `shopify app deploy`. This registers webhooks, the app proxy, the **Welcome
 
 ## 6. Known limits
 - The rate limiter is in memory, so run a single app instance.
-- Claims stay at `TRIGGERED`; Flow cannot report that Shopify Email actually sent the message.
+- `SENT` means Resend accepted the message, not that it reached the inbox. Resend's delivery webhooks are not consumed.
+- The welcome email has no unsubscribe link; it relies on the customer's Shopify email-marketing consent, which is checked before every send.
