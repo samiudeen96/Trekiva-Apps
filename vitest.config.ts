@@ -11,8 +11,6 @@ export default defineConfig({
       SHOPIFY_APP_URL: "https://test.example.com",
       SCOPES: "read_customers",
       LOG_LEVEL: "silent",
-      RESEND_API_KEY: "test-resend-key",
-      EMAIL_FROM: "Trekiva <offers@test.example.com>",
       DATABASE_URL:
         process.env.DATABASE_URL ??
         "postgresql://trekiva:change-me@localhost:5433/trekiva?schema=public",

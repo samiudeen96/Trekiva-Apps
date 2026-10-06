@@ -47,9 +47,10 @@ enum PopupTemplate {
 
 enum EmailStatus {
   PENDING
+  TRIGGERED
   SENT
   FAILED
-  // Claimed, but the customer opted out of email marketing, so no marketing email was sent.
+  // Flow fired, but the customer opted out of email marketing, so Shopify Email will not deliver.
   NOT_SUBSCRIBED
 }
 
@@ -89,7 +90,7 @@ model WelcomeOfferClaim {
   // This claim's own code, added to the campaign's Shopify discount.
   discountCode      String      @map("discount_code")
   claimedAt         DateTime    @default(now()) @map("claimed_at")
-  // Non-null means the code reached the customer: the point of no return for retries.
+  flowTriggeredAt   DateTime?   @map("flow_triggered_at")
   emailSentAt       DateTime?   @map("email_sent_at")
   emailStatus       EmailStatus @default(PENDING) @map("email_status")
   createdAt         DateTime    @default(now()) @map("created_at")

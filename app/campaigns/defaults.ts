@@ -14,9 +14,6 @@ export const defaultCampaign: CampaignInput = {
     alreadyClaimedTitle: "Already claimed",
     alreadyClaimedMessage: "You’ve already claimed this welcome offer.",
     privacyText: "By signing up you agree to receive marketing emails. Unsubscribe anytime.",
-    emailSubject: "Your welcome offer code",
-    emailHeading: "Welcome to {{brand}}",
-    emailBody: "Thanks for signing up. Here is your discount code. Use it at checkout.",
   },
   design: {
     backgroundColor: "#ffffff",

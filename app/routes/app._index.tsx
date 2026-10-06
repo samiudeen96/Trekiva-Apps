@@ -36,12 +36,14 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
 const statusTone = {
   PENDING: "neutral",
+  TRIGGERED: "info",
   SENT: "success",
   FAILED: "critical",
   NOT_SUBSCRIBED: "warning",
 } as const;
 const statusLabel = {
   PENDING: "Pending",
+  TRIGGERED: "Flow triggered",
   SENT: "Sent",
   FAILED: "Failed",
   NOT_SUBSCRIBED: "Not subscribed",
@@ -67,7 +69,7 @@ export default function Dashboard() {
     { label: "Create campaign", detail: "Design a new popup", icon: "plus-circle", href: "/app/campaigns/new" },
     { label: "Campaigns", detail: "Edit, activate or pause", icon: "layout-popup", href: "/app/campaigns" },
     { label: "Claims", detail: "Search and export claims", icon: "email", href: "/app/claims" },
-    { label: "Settings", detail: "Check email and connections", icon: "settings", href: "/app/settings" },
+    { label: "Settings", detail: "Check Flow and connections", icon: "settings", href: "/app/settings" },
   ] as const;
 
   return (
@@ -76,15 +78,15 @@ export default function Dashboard() {
         Create campaign
       </s-button>
       {d.failedClaims > 0 && (
-        <s-banner tone="critical" heading={`${d.failedClaims} claim(s) did not get their email`}>
+        <s-banner tone="critical" heading={`${d.failedClaims} claim(s) did not reach Shopify Flow`}>
           Those customers did not get their email yet. They will be retried automatically when they submit
           again. Check Settings for connection problems.
         </s-banner>
       )}
       {d.notSubscribedClaims > 0 && (
         <s-banner tone="warning" heading={`${d.notSubscribedClaims} claim(s) from customers who unsubscribed from email marketing`}>
-          They claimed an offer, but they opted out of email marketing, so Trekiva did not email their
-          code. They are marked Not subscribed on the Claims page.
+          Flow was triggered, but Shopify Email does not send marketing email to these customers, so they
+          may not have received their code. They are marked Not subscribed on the Claims page.
         </s-banner>
       )}
       {d.activeCampaigns === 0 && (

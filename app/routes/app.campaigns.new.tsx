@@ -5,14 +5,10 @@ import { CampaignForm } from "../components/CampaignForm";
 import { defaultCampaign } from "../campaigns/defaults";
 import { listCodeDiscounts } from "../discounts/discounts.server";
 import { campaignService, parseCampaignForm } from "../campaigns/service";
-import { getEmailBranding } from "../email/email.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin } = await authenticate.admin(request);
-  return {
-    discounts: await listCodeDiscounts(admin).catch(() => null),
-    emailBranding: getEmailBranding(),
-  };
+  return { discounts: await listCodeDiscounts(admin).catch(() => null) };
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
@@ -27,14 +23,13 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
 export default function NewCampaign() {
   const data = useActionData<typeof action>();
-  const { discounts, emailBranding } = useLoaderData<typeof loader>();
+  const { discounts } = useLoaderData<typeof loader>();
   return (
     <CampaignForm
       heading="Create campaign"
       initial={defaultCampaign}
       errors={data?.errors}
       discounts={discounts}
-      emailBranding={emailBranding}
     />
   );
 }

@@ -1,5 +1,3 @@
-import type { EmailContent } from "../email/template";
-
 export type ClaimStatus = "claimed" | "already_claimed";
 
 export interface ClaimOutcome {
@@ -14,17 +12,11 @@ export interface ClaimContext {
 }
 
 export interface FulfilmentInput {
-  /** The claim row's id, used as the send's idempotency key. */
-  claimId: string;
   shopDomain: string;
   email: string;
-  /** The merchant's internal label for the popup. Never shown to the customer. */
   campaignName: string;
   discountCode: string;
   claimedAt: Date;
-  customerId: string;
-  /** The campaign's editable email copy. */
-  emailContent: EmailContent;
 }
 
 export interface CustomerRecord {
@@ -53,9 +45,11 @@ export interface DiscountCodeGateway {
   issueCode(input: { discountId: string; code: string }): Promise<void>;
 }
 
-/** Delivers the claim's discount code to the customer. */
-export interface EmailGateway {
-  sendWelcomeOffer(input: FulfilmentInput): Promise<void>;
+/** Fires the "Welcome Offer Claimed" Flow trigger. */
+export interface FlowGateway {
+  triggerWelcomeOfferClaimed(
+    input: FulfilmentInput & { customerId: string },
+  ): Promise<void>;
 }
 
 export class CampaignUnavailableError extends Error {}

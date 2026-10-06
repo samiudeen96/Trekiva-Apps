@@ -6,7 +6,6 @@ import { authenticate } from "../shopify.server";
 import { CampaignForm } from "../components/CampaignForm";
 import { listCodeDiscounts } from "../discounts/discounts.server";
 import { campaignService, campaignToInput, parseCampaignForm } from "../campaigns/service";
-import { getEmailBranding } from "../email/email.server";
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   const { session, admin } = await authenticate.admin(request);
@@ -15,7 +14,6 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   return {
     input: campaignToInput(campaign),
     discounts: await listCodeDiscounts(admin).catch(() => null),
-    emailBranding: getEmailBranding(),
   };
 };
 
@@ -31,7 +29,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 };
 
 export default function EditCampaign() {
-  const { input, discounts, emailBranding } = useLoaderData<typeof loader>();
+  const { input, discounts } = useLoaderData<typeof loader>();
   const data = useActionData<typeof action>();
   const shopify = useAppBridge();
   useEffect(() => {
@@ -41,7 +39,6 @@ export default function EditCampaign() {
     <CampaignForm heading={input.details.name} initial={input}
       errors={data?.errors}
       discounts={discounts}
-      emailBranding={emailBranding}
     />
   );
 }
