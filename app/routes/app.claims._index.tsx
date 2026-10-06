@@ -1,6 +1,6 @@
-import { useRef } from "react";
-import type { LoaderFunctionArgs } from "react-router";
-import { useLoaderData, useNavigate } from "react-router";
+import { useRef, useState } from "react";
+import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
+import { useLoaderData, useNavigate, useNavigation, useSubmit } from "react-router";
 import { authenticate } from "../shopify.server";
 import { CLAIMS_PAGE_SIZE, claimRepository } from "../repositories/claim.repository";
 import { downloadClaimsCsv } from "../components/download-claims";
@@ -29,6 +29,13 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   };
 };
 
+export const action = async ({ request }: ActionFunctionArgs) => {
+  const { session } = await authenticate.admin(request);
+  const form = await request.formData();
+  if (form.get("intent") !== "delete") return { deleted: false };
+  return { deleted: await claimRepository.delete(session.shop, String(form.get("id") ?? "")) };
+};
+
 const statusTone = {
   PENDING: "neutral",
   TRIGGERED: "info",
@@ -47,6 +54,9 @@ const statusLabel = {
 export default function Claims() {
   const { claims, page, pages, total, q } = useLoaderData<typeof loader>();
   const navigate = useNavigate();
+  const submit = useSubmit();
+  const deleting = useNavigation().state === "submitting";
+  const [confirmId, setConfirmId] = useState<string | null>(null);
   const search = useRef<{ value?: string } | null>(null);
   const go = (p: number, term = q) =>
     navigate(`/app/claims?${new URLSearchParams({ ...(term ? { q: term } : {}), page: String(p) })}`);
@@ -64,6 +74,12 @@ export default function Claims() {
             {q && <s-button variant="tertiary" onClick={() => go(1, "")}>Clear</s-button>}
           </s-stack>
         </s-box>
+        <s-box paddingInline="base" paddingBlockEnd="base">
+          <s-text color="subdued">
+            Deleting a claim removes it from Trekiva only. The Shopify customer and the discount code
+            stay, and that email can claim the offer again.
+          </s-text>
+        </s-box>
         {claims.length === 0 ? (
           <s-box padding="large">
             <s-text>{q ? "No claims match your search." : "No claims yet."}</s-text>
@@ -77,6 +93,7 @@ export default function Claims() {
               <s-table-header>Discount</s-table-header>
               <s-table-header>Claimed</s-table-header>
               <s-table-header>Email status</s-table-header>
+              <s-table-header>Actions</s-table-header>
             </s-table-header-row>
             <s-table-body>
               {claims.map((c) => (
@@ -92,6 +109,28 @@ export default function Claims() {
                   <s-table-cell>{new Date(c.claimedAt).toLocaleString()}</s-table-cell>
                   <s-table-cell>
                     <s-badge tone={statusTone[c.status]}>{statusLabel[c.status]}</s-badge>
+                  </s-table-cell>
+                  <s-table-cell>
+                    {confirmId === c.id ? (
+                      <s-stack direction="inline" gap="small-200">
+                        <s-button
+                          tone="critical"
+                          variant="primary"
+                          onClick={() => {
+                            setConfirmId(null);
+                            submit({ intent: "delete", id: c.id }, { method: "post" });
+                          }}
+                          {...(deleting ? { loading: true } : {})}
+                        >
+                          Confirm delete
+                        </s-button>
+                        <s-button onClick={() => setConfirmId(null)}>Cancel</s-button>
+                      </s-stack>
+                    ) : (
+                      <s-button tone="critical" variant="tertiary" onClick={() => setConfirmId(c.id)}>
+                        Delete
+                      </s-button>
+                    )}
                   </s-table-cell>
                 </s-table-row>
               ))}

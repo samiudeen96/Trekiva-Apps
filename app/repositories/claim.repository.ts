@@ -55,6 +55,12 @@ export const claimRepository = {
     }
   },
 
+  /** Scoped by shop so one merchant can never delete another's claim. False when it does not exist. */
+  async delete(shopDomain: string, id: string) {
+    const { count } = await db.welcomeOfferClaim.deleteMany({ where: { id, shopDomain } });
+    return count > 0;
+  },
+
   /** Claims whose last attempt failed, newest first, with the reason it was recorded. */
   failed(shopDomain: string, take: number) {
     return db.welcomeOfferClaim.findMany({

@@ -46,6 +46,7 @@ export type SaveResult<T> = { ok: true; value: T } | { ok: false; errors: FieldE
 export const campaignService = {
   list: campaignRepository.listWithClaimCounts,
   get: campaignRepository.findById,
+  remove: campaignRepository.remove,
 
   async create(shopDomain: string, admin: AdminGraphqlClient, input: CampaignInput): Promise<SaveResult<Campaign>> {
     const r = await resolveDiscount(admin, input);
