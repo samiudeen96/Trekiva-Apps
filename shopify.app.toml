@@ -1,5 +1,5 @@
 # This file stores configurations for your Shopify app.
-name = "Trekiva App"
+name = "Trekiva Discount"
 client_id = "3d65bcc4cd60dafcad278e2aeb663931"
 application_url = "https://discount.trekiva.in"
 embedded = true

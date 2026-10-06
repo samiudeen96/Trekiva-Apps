@@ -82,10 +82,18 @@ export function toDiscountSummary(node: any): DiscountSummary | null {
 
   const eligibility = ELIGIBILITY[d.context?.__typename] ?? "All customers";
   const warnings: string[] = [];
-  // Shopify applies usageLimit to each code, so 1 makes every per-claim code single-use.
+  const notes: string[] = [];
+  // Shopify applies usageLimit to EACH redeem code, not across the discount, so 1 makes every
+  // per-claim code single-use while the number of claims stays unlimited. This is a
+  // recommendation, not a requirement: the app issues one code per email either way.
   if (d.usageLimit !== 1)
+    notes.push(
+      "Recommended: set \"Limit number of times this discount can be used in total\" to 1. Shopify applies that limit to each code separately, so it does not cap your campaign - the app adds a new code for every claim, and the number of claims stays unlimited. Left unlimited, any single code still works after it is used, so a forwarded code can be redeemed by other customers.",
+    );
+  // The app issues one code per email, so this is what stops that customer reusing their own code.
+  if (!d.appliesOncePerCustomer)
     warnings.push(
-      "Each claim gets its own code. Set \"Limit number of times this discount can be used in total\" to 1 on this discount so each code works only once.",
+      "Turn on \"Limit to one use per customer\" on this discount so a customer cannot redeem their welcome code more than once.",
     );
   if (d.context?.__typename === "DiscountCustomers")
     warnings.push(
@@ -115,6 +123,7 @@ export function toDiscountSummary(node: any): DiscountSummary | null {
     usageLimit: d.usageLimit ?? null,
     eligibility,
     warnings,
+    notes,
   };
 }
 

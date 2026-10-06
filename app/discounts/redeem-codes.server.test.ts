@@ -44,6 +44,12 @@ describe("discount code gateway", () => {
     expect(a.graphql).toHaveBeenCalledTimes(1);
   });
 
+  it("refuses to reuse a code that belongs to a different discount", async () => {
+    const a = admin({ [FIND_CODE]: [{ codeDiscountNodeByCode: { id: "gid://shopify/DiscountCodeNode/2" } }] });
+    await expect(createDiscountCodeGateway(a, fast).issueCode(input)).rejects.toThrow(/another discount/);
+    expect(a.graphql.mock.calls.filter(([q]) => q === ADD_CODE)).toHaveLength(0);
+  });
+
   it("throws when Shopify rejects the code", async () => {
     const a = admin({
       [FIND_CODE]: [notFound],

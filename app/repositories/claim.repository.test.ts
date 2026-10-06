@@ -17,7 +17,8 @@ beforeAll(async () => {
       shopDomain: shop,
       campaignId: c.id,
       emailNormalized: `user${i}@example.com`,
-      discountCode: "W",
+      // Unique per shop: claims share a discount, never a code.
+      discountCode: `W-${i}`,
       claimedAt: new Date(Date.now() - i * 1000),
       ...(i === 0 ? { emailStatus: "FAILED" as const } : {}),
     })),

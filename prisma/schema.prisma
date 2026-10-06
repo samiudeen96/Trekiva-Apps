@@ -103,6 +103,9 @@ model WelcomeOfferClaim {
 
   // The single source of truth for "one email, one claim per campaign".
   @@unique([shopDomain, campaignId, emailNormalized], map: "welcome_offer_claims_unique_email_per_campaign")
+  // A redeem code is unique per shop in Shopify, so two claims must never share one: a
+  // collision would hand a second customer a code that is already spent.
+  @@unique([shopDomain, discountCode], map: "welcome_offer_claims_unique_code_per_shop")
   @@index([shopDomain, claimedAt])
   @@index([campaignId])
   @@map("welcome_offer_claims")

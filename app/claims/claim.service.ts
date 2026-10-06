@@ -3,6 +3,8 @@ import { z } from "zod";
 import db from "../db.server";
 import { logger } from "../utils/logger.server";
 import { generateClaimCode } from "../discounts/redeem-codes.server";
+import { defaultCampaign } from "../campaigns/defaults";
+import type { CampaignContent } from "../campaigns/schema";
 import { normalizeEmail } from "./email";
 import {
   CampaignUnavailableError,
@@ -18,6 +20,21 @@ import {
 const emailSchema = z.string().max(254).email();
 /** A PENDING claim older than this is treated as a crashed attempt and may be retried. */
 const STALE_PENDING_MS = 5 * 60 * 1000;
+/** How many fresh suffixes to try before giving up on a unique code. */
+const CODE_ATTEMPTS = 5;
+
+/**
+ * Which unique index a write violated. The claim row has two, and they mean opposite things:
+ * the email one is the expected "already claimed", the code one is a suffix collision to retry.
+ */
+function uniqueViolation(e: unknown): "email" | "code" | null {
+  if (!(e instanceof Prisma.PrismaClientKnownRequestError) || e.code !== "P2002") return null;
+  // Postgres reports the index name; older/other engines report the field list.
+  const target = String(e.meta?.target ?? "");
+  if (target.includes("email")) return "email";
+  if (target.includes("code")) return "code";
+  return null;
+}
 
 export class ClaimService {
   constructor(
@@ -25,6 +42,34 @@ export class ClaimService {
     private readonly flow: FlowGateway,
     private readonly discountCodes: DiscountCodeGateway,
   ) {}
+
+  /**
+   * Inserts this email's one claim row, with its own freshly generated code.
+   * Returns null when the email already has a claim — the unique index, not a prior read,
+   * is what decides that, so concurrent requests can never both win.
+   */
+  private async insertClaim(input: {
+    shopDomain: string;
+    campaignId: string;
+    emailNormalized: string;
+    baseCode: string;
+  }) {
+    const { baseCode, ...row } = input;
+    for (let attempt = 0; attempt < CODE_ATTEMPTS; attempt++) {
+      try {
+        return await db.welcomeOfferClaim.create({
+          data: { ...row, discountCode: generateClaimCode(baseCode) },
+        });
+      } catch (e) {
+        const conflict = uniqueViolation(e);
+        if (conflict === "email") return null;
+        // A code collision is astronomically unlikely; the index makes it loud, so take a new suffix.
+        if (conflict !== "code") throw e;
+        logger.warn({ ...row, attempt }, "claim code collided, regenerating");
+      }
+    }
+    throw new Error("could not generate a unique claim code");
+  }
 
   /**
    * Idempotent first-claim flow.
@@ -42,28 +87,26 @@ export class ClaimService {
     if (!campaign?.discountCode || !campaign.discountId) throw new CampaignUnavailableError();
     const discountId = campaign.discountId;
 
-    const content = campaign.content as { successMessage: string; alreadyClaimedMessage: string };
+    // Campaigns saved before a copy field existed fall back to the defaults, so the
+    // storefront is never answered with an empty message.
+    const content = { ...defaultCampaign.content, ...(campaign.content as object) } as CampaignContent;
     const claimed: ClaimOutcome = { status: "claimed", message: content.successMessage };
     const already: ClaimOutcome = { status: "already_claimed", message: content.alreadyClaimedMessage };
 
     let claimId: string;
     let claimedAt: Date;
     let code: string;
-    try {
-      const row = await db.welcomeOfferClaim.create({
-        data: {
-          shopDomain,
-          campaignId,
-          emailNormalized: normalized,
-          discountCode: generateClaimCode(campaign.discountCode),
-        },
-      });
+    const row = await this.insertClaim({
+      shopDomain,
+      campaignId,
+      emailNormalized: normalized,
+      baseCode: campaign.discountCode,
+    });
+    if (row) {
       claimId = row.id;
       claimedAt = row.claimedAt;
       code = row.discountCode;
-    } catch (e) {
-      if (!(e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002")) throw e;
-
+    } else {
       // Existing claim: it only gets another fulfilment attempt if a previous attempt
       // failed BEFORE Flow was triggered. The compare-and-set lets exactly one request retry.
       const existing = await db.welcomeOfferClaim.findUnique({

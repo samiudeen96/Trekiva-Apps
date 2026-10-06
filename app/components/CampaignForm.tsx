@@ -191,8 +191,13 @@ export function CampaignForm({ initial, errors = {}, heading, discounts }: Props
                     Each claim gets its own code, such as {claimCodePrefix(selected.code)}-7KQ2M9XH.
                     The base code {selected.code} also works, so don&apos;t publish it.
                   </s-text>
-                  <s-text>Uses per code: {selected.usageLimit ?? "Unlimited"}</s-text>
+                  <s-text>
+                    Shopify usage limit (applies per code):{" "}
+                    {selected.usageLimit === null ? "Unlimited" : `${selected.usageLimit} per code`}
+                  </s-text>
                   <s-text>One use per customer: {selected.oncePerCustomer ? "Yes" : "No"}</s-text>
+                  <s-text>App claim limit: 1 per email</s-text>
+                  <s-text>First-purchase eligibility: Not enforced (returning customers can claim)</s-text>
                   <s-text>Eligibility: {selected.eligibility}</s-text>
                   <s-text>Minimum purchase: {selected.minimumRequirement}</s-text>
                   <s-text>
@@ -202,6 +207,9 @@ export function CampaignForm({ initial, errors = {}, heading, discounts }: Props
                   </s-text>
                   {selected.warnings.map((w) => (
                     <s-banner key={w} tone="warning">{w}</s-banner>
+                  ))}
+                  {selected.notes.map((n) => (
+                    <s-banner key={n} tone="info">{n}</s-banner>
                   ))}
                 </s-stack>
               </s-box>

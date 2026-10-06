@@ -1,6 +1,17 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import db from "../db.server";
 import { ClaimService } from "./claim.service";
+
+// Lets a test force the next generated code, so a suffix collision can be reproduced.
+const forced = vi.hoisted(() => ({ codes: [] as string[] }));
+vi.mock("../discounts/redeem-codes.server", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../discounts/redeem-codes.server")>();
+  return {
+    ...actual,
+    generateClaimCode: (base: string) => forced.codes.shift() ?? actual.generateClaimCode(base),
+  };
+});
+
 import {
   InvalidEmailError,
   type CustomerGateway,
@@ -43,6 +54,7 @@ function build(
 }
 
 beforeEach(async () => {
+  forced.codes = [];
   await db.welcomeOfferClaim.deleteMany({ where: { shopDomain: shop } });
   await db.campaign.deleteMany({ where: { shopDomain: shop } });
   const c = await db.campaign.create({
@@ -220,6 +232,63 @@ describe("ClaimService", () => {
     await expect(service.claim({ shopDomain: shop, campaignId, email: "nope" })).rejects.toBeInstanceOf(InvalidEmailError);
     await db.campaign.update({ where: { id: campaignId }, data: { status: "DISABLED" } });
     await expect(service.claim({ shopDomain: shop, campaignId, email: "ok@example.com" })).rejects.toThrow();
+  });
+
+  it("a duplicate code is regenerated, not mistaken for an already-claimed email", async () => {
+    const { service, trigger } = build();
+    await service.claim({ shopDomain: shop, campaignId, email: "first@example.com" });
+    const taken = (await db.welcomeOfferClaim.findFirstOrThrow({ where: { shopDomain: shop } })).discountCode;
+
+    // The next claim's first generated suffix collides with the code already issued.
+    forced.codes = [taken];
+    const out = await service.claim({ shopDomain: shop, campaignId, email: "second@example.com" });
+    expect(out.status).toBe("claimed");
+    expect(trigger).toHaveBeenCalledTimes(2);
+
+    const second = await db.welcomeOfferClaim.findFirstOrThrow({
+      where: { shopDomain: shop, emailNormalized: "second@example.com" },
+    });
+    expect(second.discountCode).not.toBe(taken);
+    expect(second.discountCode).toMatch(CLAIM_CODE);
+  });
+
+  it("the database rejects two claims sharing a code in one shop, but allows it across shops", async () => {
+    const { service } = build();
+    await service.claim({ shopDomain: shop, campaignId, email: "owner@example.com" });
+    const row = await db.welcomeOfferClaim.findFirstOrThrow({ where: { shopDomain: shop } });
+
+    await expect(
+      db.welcomeOfferClaim.create({
+        data: { shopDomain: shop, campaignId, emailNormalized: "other@example.com", discountCode: row.discountCode },
+      }),
+    ).rejects.toMatchObject({ code: "P2002" });
+
+    // Codes only have to be unique within the shop that issued them.
+    const otherShop = `${shop}-sibling`;
+    const sibling = await db.campaign.create({
+      data: { shopDomain: otherShop, name: "C", status: "ACTIVE", discountCode: "W", content: {}, design: {}, rules: {} },
+    });
+    await expect(
+      db.welcomeOfferClaim.create({
+        data: {
+          shopDomain: otherShop,
+          campaignId: sibling.id,
+          emailNormalized: "other@example.com",
+          discountCode: row.discountCode,
+        },
+      }),
+    ).resolves.toBeTruthy();
+    await db.welcomeOfferClaim.deleteMany({ where: { shopDomain: otherShop } });
+    await db.campaign.deleteMany({ where: { shopDomain: otherShop } });
+  });
+
+  it("a returning customer can claim: first-purchase eligibility is deliberately not enforced", async () => {
+    // The app's only gate is one claim per email. It never reads order history, so a customer
+    // with previous orders is accepted. Restrict the discount in Shopify if that is not wanted.
+    const { service, findOrCreate } = build();
+    findOrCreate.mockResolvedValueOnce({ id: "gid://shopify/Customer/99", subscribed: true });
+    const out = await service.claim({ shopDomain: shop, campaignId, email: "regular@example.com" });
+    expect(out.status).toBe("claimed");
   });
 
   it("does not claim across shops", async () => {

@@ -92,7 +92,9 @@ docs/
 - customers: find by email, create, write `trekiva.*` metafields.
 - discounts: list/read existing native code discounts. `write_discounts` is used only to add each claim's own
   redeem code (`discountRedeemCodeBulkAdd`) to the merchant's chosen discount; the app never creates or edits discounts.
-  Shopify applies `usageLimit` per code, so the merchant sets it to 1 to make every per-claim code single-use.
+  Shopify applies `usageLimit` to each redeem code separately, not across the discount, so setting it to 1 makes
+  every per-claim code single-use without capping how many customers can claim (the app adds a new code per claim).
+  It is recommended, not required. `appliesOncePerCustomer` is what stops a customer reusing their own code.
 - Flow trigger (`flowTriggerReceive`) and theme app extension need no scope.
 - Customer data needs Protected Customer Data access (level 2 for email) approved in the Partner Dashboard.
 

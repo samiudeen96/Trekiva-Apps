@@ -10,12 +10,14 @@ export interface DiscountSummary {
   startsAt: string | null;
   endsAt: string | null;
   oncePerCustomer: boolean;
-  /** Uses allowed per code; null = unlimited. */
+  /** Uses allowed per redeem code (Shopify applies it per code, not per discount); null = unlimited. */
   usageLimit: number | null;
   minimumRequirement: string;
   eligibility: string;
   /** Merchant-facing issues; they never block saving (except expiry, see service). */
   warnings: string[];
+  /** Optional setup advice. Not a problem, so it is shown in a calmer tone than a warning. */
+  notes: string[];
 }
 
 export interface AdminGraphqlClient {

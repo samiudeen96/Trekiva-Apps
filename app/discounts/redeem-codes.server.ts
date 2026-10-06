@@ -53,7 +53,13 @@ export function createDiscountCodeGateway(
     async issueCode({ discountId, code }) {
       // Idempotent: a retried claim may already have added its code on an earlier attempt.
       const found = await gql(admin, FIND_CODE, { code });
-      if (found.codeDiscountNodeByCode) return;
+      const owner = found.codeDiscountNodeByCode;
+      if (owner) {
+        if (owner.id === discountId) return;
+        // The code exists on a different discount, so it would hand the customer the wrong
+        // offer (or one already spent). Fail loudly rather than email an unverified code.
+        throw new Error(`claim code already belongs to another discount: ${owner.id}`);
+      }
 
       const added = await gql(admin, ADD_CODE, { discountId, codes: [{ code }] });
       const { bulkCreation, userErrors } = added.discountRedeemCodeBulkAdd;
