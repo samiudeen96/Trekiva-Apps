@@ -56,6 +56,7 @@ Then `shopify app deploy`. This registers webhooks, the app proxy, the **Welcome
 7. Test with a fresh email: expect the success message and an email with a unique code (e.g. `WELCOME10-7KQ2M9XH`). Submit again: expect "Already claimed" and no second email.
 
 ## 5. Operations
+- Failed claims: **Settings** shows why each one failed (customer, discount or Flow step) and has a **Retry failed claims** button. It also checks that every active campaign's Shopify discount still exists and is live.
 - Health: `GET /healthz` (checks the database). Docker marks `trekiva-app` unhealthy if it fails.
 - Logs: `docker compose logs -f trekiva-app` (JSON; tokens and emails are redacted).
 - Backups: `deploy/backup.sh` (cron daily; keeps 14 days). Restore: `gunzip -c backups/<file> | docker compose exec -T postgres psql -U $POSTGRES_USER -d $POSTGRES_DB`.

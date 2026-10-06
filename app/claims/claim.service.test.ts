@@ -129,6 +129,35 @@ describe("ClaimService", () => {
     expect(trigger.mock.calls[0][0].discountCode).toBe(row.discountCode);
   });
 
+  it("records which step failed and why, and clears it when the retry succeeds", async () => {
+    let fail = true;
+    const { service } = build({
+      flow: async () => {
+        if (fail) throw new Error("flowTriggerReceive failed: no workflow");
+      },
+    });
+    await expect(service.claim({ shopDomain: shop, campaignId, email: "why@example.com" })).rejects.toThrow();
+    const failed = await db.welcomeOfferClaim.findFirstOrThrow({ where: { shopDomain: shop } });
+    expect(failed).toMatchObject({
+      emailStatus: "FAILED",
+      failureStep: "flow",
+      failureReason: "flowTriggerReceive failed: no workflow",
+    });
+
+    fail = false;
+    await service.claim({ shopDomain: shop, campaignId, email: "why@example.com" });
+    const ok = await db.welcomeOfferClaim.findFirstOrThrow({ where: { shopDomain: shop } });
+    expect(ok).toMatchObject({ emailStatus: "TRIGGERED", failureStep: null, failureReason: null });
+  });
+
+  it("records the customer and discount steps too", async () => {
+    const a = build({ issueCode: async () => { throw new Error("discount gone"); } });
+    await expect(a.service.claim({ shopDomain: shop, campaignId, email: "d@example.com" })).rejects.toThrow();
+    expect(
+      (await db.welcomeOfferClaim.findFirstOrThrow({ where: { shopDomain: shop, emailNormalized: "d@example.com" } })).failureStep,
+    ).toBe("discount");
+  });
+
   it("same email (any casing) is already_claimed: no Flow, no new row", async () => {
     const { service, trigger, findOrCreate, writeClaimMetafields } = build();
     await service.claim({ shopDomain: shop, campaignId, email: "a@b.co" });

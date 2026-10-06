@@ -56,3 +56,38 @@ export async function checkShopify(
     };
   }
 }
+
+export interface DiscountLookupResult {
+  status: "ACTIVE" | "EXPIRED" | "SCHEDULED";
+}
+
+/**
+ * Every active campaign adds its claims' codes to one Shopify discount, so a discount that was
+ * deleted, expired or not started yet makes every claim fail. `lookup` returns null when Shopify
+ * no longer has the discount.
+ */
+export async function checkCampaignDiscounts(
+  campaigns: { name: string; discountId: string | null }[],
+  lookup: (discountId: string) => Promise<DiscountLookupResult | null>,
+): Promise<Check> {
+  if (campaigns.length === 0) return { ok: true, detail: "No active campaigns" };
+
+  const problems: string[] = [];
+  for (const c of campaigns) {
+    if (!c.discountId) {
+      problems.push(`"${c.name}" has no discount selected`);
+      continue;
+    }
+    try {
+      const found = await lookup(c.discountId);
+      if (!found) problems.push(`"${c.name}": its discount no longer exists in Shopify`);
+      else if (found.status === "EXPIRED") problems.push(`"${c.name}": its discount has expired`);
+      else if (found.status === "SCHEDULED") problems.push(`"${c.name}": its discount has not started yet`);
+    } catch {
+      problems.push(`"${c.name}": could not check its discount`);
+    }
+  }
+  return problems.length
+    ? { ok: false, detail: problems.join(". ") }
+    : { ok: true, detail: `${campaigns.length} active campaign(s): discount is live` };
+}

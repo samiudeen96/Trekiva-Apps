@@ -55,6 +55,16 @@ export const claimRepository = {
     }
   },
 
+  /** Claims whose last attempt failed, newest first, with the reason it was recorded. */
+  failed(shopDomain: string, take: number) {
+    return db.welcomeOfferClaim.findMany({
+      where: { shopDomain, emailStatus: "FAILED" },
+      orderBy: { updatedAt: "desc" },
+      take,
+      include,
+    });
+  },
+
   async stats(shopDomain: string) {
     const startOfToday = new Date();
     startOfToday.setHours(0, 0, 0, 0);

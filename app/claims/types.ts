@@ -1,3 +1,6 @@
+/** Which fulfilment step a failed claim stopped at. */
+export type ClaimFailureStep = "customer" | "discount" | "flow";
+
 export type ClaimStatus = "claimed" | "already_claimed";
 
 export interface ClaimOutcome {

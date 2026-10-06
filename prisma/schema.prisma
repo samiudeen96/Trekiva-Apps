@@ -93,6 +93,9 @@ model WelcomeOfferClaim {
   flowTriggeredAt   DateTime?   @map("flow_triggered_at")
   emailSentAt       DateTime?   @map("email_sent_at")
   emailStatus       EmailStatus @default(PENDING) @map("email_status")
+  // Why the last fulfilment attempt failed (customer | discount | flow). Cleared on success.
+  failureStep       String?     @map("failure_step")
+  failureReason     String?     @map("failure_reason")
   createdAt         DateTime    @default(now()) @map("created_at")
   updatedAt         DateTime    @updatedAt @map("updated_at")
 

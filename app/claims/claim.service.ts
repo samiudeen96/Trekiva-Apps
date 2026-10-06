@@ -8,6 +8,7 @@ import {
   CampaignUnavailableError,
   InvalidEmailError,
   type ClaimContext,
+  type ClaimFailureStep,
   type ClaimOutcome,
   type CustomerGateway,
   type DiscountCodeGateway,
@@ -94,6 +95,7 @@ export class ClaimService {
       code = existing.discountCode;
     }
 
+    let step: ClaimFailureStep = "customer";
     try {
       const customer = await this.customers.findOrCreate({ email: normalized });
       const customerId = customer.id;
@@ -102,7 +104,9 @@ export class ClaimService {
         data: { shopifyCustomerId: customerId },
       });
       // The code must be redeemable before Flow emails it.
+      step = "discount";
       await this.discountCodes.issueCode({ discountId, code });
+      step = "flow";
       await this.flow.triggerWelcomeOfferClaimed({
         shopDomain,
         email: normalized,
@@ -118,6 +122,8 @@ export class ClaimService {
         data: {
           flowTriggeredAt: new Date(),
           emailStatus: customer.subscribed ? "TRIGGERED" : "NOT_SUBSCRIBED",
+          failureStep: null,
+          failureReason: null,
         },
       });
       // After Flow: a metafield problem must never affect the claim outcome.
@@ -131,7 +137,11 @@ export class ClaimService {
       await db.welcomeOfferClaim
         .updateMany({
           where: { id: claimId, flowTriggeredAt: null },
-          data: { emailStatus: "FAILED" },
+          data: {
+            emailStatus: "FAILED",
+            failureStep: step,
+            failureReason: (err instanceof Error ? err.message : String(err)).slice(0, 500),
+          },
         })
         .catch(() => undefined);
       throw err;
