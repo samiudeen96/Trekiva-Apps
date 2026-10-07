@@ -1,0 +1,98 @@
+import { emailTemplateSchema, type EmailSection, type EmailSectionType, type EmailTemplate } from "./schema";
+
+export const defaultEmail: EmailTemplate = {
+  schemaVersion: 1,
+  subject: "Your welcome offer from {{shop_name}}",
+  previewText: "Your personal discount code is inside",
+  brand: {
+    backgroundColor: "#f1f1f1",
+    contentBackgroundColor: "#ffffff",
+    textColor: "#1a1a1a",
+    buttonColor: "#000000",
+    buttonTextColor: "#ffffff",
+    fontFamily: "sans",
+    width: 600,
+  },
+  sections: [
+    { type: "header", id: "header", logoUrl: "", logoWidth: 160, align: "center", backgroundColor: "#ffffff" },
+    {
+      type: "text",
+      id: "intro",
+      heading: "Welcome to {{shop_name}}",
+      body: "Hi {{first_name}},\n\nThanks for signing up. Here is your personal welcome offer.",
+      align: "center",
+    },
+    {
+      type: "discount",
+      id: "discount",
+      heading: "Your welcome code",
+      description: "Copy this code and enter it at checkout, or use the button to have it applied for you.",
+      note: "",
+      buttonLabel: "Shop now",
+      redirectPath: "",
+    },
+  ],
+  footer: { address: "" },
+};
+
+/**
+ * The template a campaign actually sends. A campaign saved before email templates existed stores {},
+ * which resolves to the default. Anything stored that no longer validates also falls back to the
+ * default rather than sending a broken email.
+ */
+export function resolveEmailTemplate(stored: unknown): EmailTemplate {
+  const merged = { ...defaultEmail, ...(stored && typeof stored === "object" ? stored : {}) };
+  const parsed = emailTemplateSchema.safeParse(merged);
+  return parsed.success ? parsed.data : defaultEmail;
+}
+
+let counter = 0;
+const newId = (type: string) => `${type}-${Date.now().toString(36)}${(counter++).toString(36)}`;
+
+/** A fresh section with sensible starting content, for the editor's "Add section". */
+export function newSection(type: EmailSectionType): EmailSection {
+  const id = newId(type);
+  switch (type) {
+    case "header":
+      return { type, id, logoUrl: "", logoWidth: 160, align: "center", backgroundColor: "#ffffff" };
+    case "text":
+      return { type, id, heading: "A heading", body: "Write something for your customer here.", align: "left" };
+    case "image":
+      return { type, id, imageUrl: "", alt: "", linkUrl: "" };
+    case "imageText":
+      return {
+        type,
+        id,
+        imageUrl: "",
+        alt: "",
+        heading: "Heading",
+        body: "A short description.",
+        buttonLabel: "Shop now",
+        buttonUrl: "{{discount_link}}",
+        imagePosition: "left",
+      };
+    case "discount":
+      return { type, id, heading: "Your welcome code", description: "", note: "", buttonLabel: "Shop now", redirectPath: "" };
+    case "button":
+      return { type, id, label: "Shop now", url: "{{discount_link}}", align: "center" };
+    case "columns":
+      return {
+        type,
+        id,
+        items: [
+          { title: "Free shipping", text: "On orders over a set amount." },
+          { title: "Easy returns", text: "Not right? Send it back." },
+        ],
+      };
+  }
+}
+
+export const SECTION_LABELS: Record<EmailSectionType, string> = {
+  header: "Header (logo)",
+  text: "Text",
+  image: "Image / banner",
+  imageText: "Image with text",
+  discount: "Discount code",
+  button: "Button",
+  columns: "Columns",
+};

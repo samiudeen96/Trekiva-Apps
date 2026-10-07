@@ -3,6 +3,7 @@ import { getCodeDiscount } from "../discounts/discounts.server";
 import type { AdminGraphqlClient } from "../discounts/types";
 import { campaignRepository, type DiscountRef } from "../repositories/campaign.repository";
 import { defaultCampaign } from "./defaults";
+import { resolveEmailTemplate } from "../email/defaults";
 import type { CampaignInput } from "./schema";
 
 export { parseCampaignForm } from "./form";
@@ -17,6 +18,7 @@ export function campaignToInput(c: Campaign): CampaignInput {
     content: { ...defaultCampaign.content, ...(c.content as object) },
     design: { ...defaultCampaign.design, ...(c.design as object) },
     rules: { ...defaultCampaign.rules, ...(c.rules as object) },
+    email: resolveEmailTemplate(c.email),
   };
 }
 

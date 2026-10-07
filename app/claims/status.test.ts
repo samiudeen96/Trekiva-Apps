@@ -24,5 +24,7 @@ describe("handoffLabel", () => {
     expect(handoffLabel(null, "TRIGGERED")).toBe("Ready");
     expect(handoffLabel(null, "FAILED")).toBe("Failed");
     expect(handoffLabel(null, "PENDING")).toBe("Pending");
+    // The app sent the email itself, so Flow was never involved.
+    expect(handoffLabel(null, "EMAIL_SENT", "APP")).toBe("Not used");
   });
 });

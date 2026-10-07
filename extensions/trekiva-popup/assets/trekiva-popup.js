@@ -93,18 +93,10 @@
     var error = el("p", "tkv-error");
     error.setAttribute("role", "alert");
     error.hidden = true;
-    // Typing an email is not marketing consent: only this unticked-by-default box grants it.
-    var consentRow = el("label", "tkv-consent");
-    var consent = el("input");
-    consent.type = "checkbox";
-    consent.name = "marketingConsent";
-    consentRow.appendChild(consent);
-    consentRow.appendChild(el("span", "", c.content.consentLabel || "Email me offers and news"));
     var btn = el("button", "tkv-btn", c.content.buttonText);
     btn.type = "submit";
     form.appendChild(input);
     form.appendChild(error);
-    form.appendChild(consentRow);
     form.appendChild(btn);
     wrap.appendChild(form);
     if (c.content.privacyText) wrap.appendChild(el("p", "tkv-privacy", c.content.privacyText));
@@ -128,7 +120,7 @@
       fetch(base + "/campaigns/" + encodeURIComponent(c.id) + "/claim", {
         method: "POST",
         headers: { "Content-Type": "application/json", Accept: "application/json" },
-        body: JSON.stringify({ email: email, marketingConsent: consent.checked }),
+        body: JSON.stringify({ email: email }),
         credentials: "same-origin"
       })
         .then(function (res) {

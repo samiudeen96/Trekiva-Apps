@@ -5,11 +5,11 @@ import { ClaimService } from "../claims/claim.service";
 import { CampaignUnavailableError, InvalidEmailError } from "../claims/types";
 import { createCustomerGateway } from "../shopify/customers.server";
 import { createDiscountCodeGateway } from "../discounts/redeem-codes.server";
+import { createEmailGateway, emailConfig } from "../email/email.server";
 import { allowClaimAttempt, clientIp } from "../utils/rate-limit.server";
 import { logger } from "../utils/logger.server";
 
-// marketingConsent is the popup's explicit "email me offers" checkbox; absent means not given.
-const bodySchema = z.object({ email: z.string().max(254), marketingConsent: z.boolean().optional() });
+const bodySchema = z.object({ email: z.string().max(254) });
 
 const json = (body: object, status = 200) =>
   Response.json(body, { status, headers: { "Cache-Control": "no-store" } });
@@ -33,13 +33,21 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     return json({ status: "error", message: "Please enter a valid email address." }, 400);
   }
 
-  const claimService = new ClaimService(createCustomerGateway(admin), createDiscountCodeGateway(admin));
+  // Resend configured = the app sends the email; otherwise Shopify Flow does (the earlier setup).
+  const mail = emailConfig();
+  const claimService = new ClaimService(
+    createCustomerGateway(admin),
+    createDiscountCodeGateway(admin),
+    mail ? createEmailGateway(mail) : undefined,
+  );
   try {
     const outcome = await claimService.claim({
       shopDomain: session.shop,
       campaignId: params.campaignId!,
       email: body.data.email,
-      marketingConsent: body.data.marketingConsent === true,
+      // Submitting the popup is the opt-in (its privacy text says so). The gateway still never
+      // overrides an unsubscribe, a pending double opt-in or an invalid address.
+      marketingConsent: true,
     });
     return json(outcome);
   } catch (err) {

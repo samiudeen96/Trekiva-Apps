@@ -46,11 +46,10 @@ Key decisions
 - **Discount code is never returned to the storefront.** Each claim gets its own code (`<BASE>-XXXXXXXX`), added to the
   merchant's discount before the tag is added; it is stored on the claim and exposed to Flow only via customer metafields. A leaked code can be traced
   to its claim and deleted on its own.
-- **Email consent is explicit.** Typing an email is not consent. Only the popup's marketing checkbox (unticked by
-  default) subscribes a new customer, or an existing customer who never chose (`NOT_SUBSCRIBED`). `UNSUBSCRIBED`,
-  `PENDING`, `INVALID` and unknown states are never changed. The claim stays valid either way; `email_eligibility`
-  (SUBSCRIBED | NOT_SUBSCRIBED | UNKNOWN) records whether Shopify Email can deliver, because it only sends to
-  subscribed customers.
+- **Email consent.** Submitting the popup is the opt-in (the popup's privacy text must say so): it subscribes new
+  customers and existing customers who never chose (`NOT_SUBSCRIBED`). `UNSUBSCRIBED`, `PENDING`, `INVALID` and unknown
+  states are never changed. The claim stays valid either way; `email_eligibility` (SUBSCRIBED | NOT_SUBSCRIBED |
+  UNKNOWN) records whether Shopify Email can deliver, because it only sends to subscribed customers.
 - Admin uses Shopify's current Polaris (web components `s-page`, `s-section`, …) which is what the
   official template ships; the legacy `@shopify/polaris` React package is deprecated.
 
@@ -108,6 +107,34 @@ docs/
   the theme app extension needs no scope. No scope was added for the tag handoff.
 - Customer data needs Protected Customer Data access (level 2 for email) approved in the Partner Dashboard.
 
+## 4b. Email sent by the app (Resend)
+
+Shopify Email cannot put a different code in each customer's email (verified: a metafield in a button link comes out
+empty), so the app can send the welcome email itself. It is **optional and off until configured**: with
+`RESEND_API_KEY` and `EMAIL_FROM` unset, delivery stays with Shopify Flow exactly as in section 5.
+
+- **Per-claim delivery mode.** `welcome_offer_claims.delivery` is `FLOW` or `APP`, fixed when the claim is created. A
+  claim handled by Flow is never emailed by the app later, and an `APP` claim never gets a Flow tag, so a workflow left
+  switched on cannot send a second email. Existing claims are `FLOW`.
+- **Flow of an `APP` claim:** customer → discount code → email → (best effort) metafield mirror. The claim is settled
+  by `email_sent_at`, not by the tag. A failed send leaves the claim `FAILED` (`failure_step = email`); a retry reuses
+  the stored code and the same claim id, which is also the Resend `Idempotency-Key` (`welcome-offer-<claimId>`), so a
+  send that did land is never duplicated.
+- **Template.** Each campaign stores `campaigns.email` (JSON, validated by `app/email/schema.ts`): subject, preview text,
+  brand (colors, font, width) and an ordered list of sections: header, text, image, image with text, discount, button,
+  columns; plus a fixed footer. `app/email/render.ts` turns it into email-safe HTML (tables, inline styles, a mobile
+  stacking rule) and a plain-text part. All merchant text is escaped; only `https` links and `{{discount_link}}` /
+  `{{shop_url}}` reach an `href`. The schema requires a discount section, and the renderer adds one if a stored
+  template lost it, so an email can never go out without its code. `{{code}}`, `{{first_name}}` (falls back to
+  "there") and `{{shop_name}}` work in any text.
+- **Consent.** Customers subscribed to marketing get the full template with a signed one-click unsubscribe link and
+  `List-Unsubscribe` headers. Anyone else (not subscribed, or unknown) gets a short code-only message with no
+  marketing and no unsubscribe link, because they asked for the code. The unsubscribe page (`/unsubscribe`, public,
+  signed token, no expiry) sets `UNSUBSCRIBED` in Shopify, which stays the single record of consent. GET only asks;
+  POST unsubscribes (so link scanners cannot unsubscribe anyone).
+- **Not in the first version** (each needs more access): product and collection sections (`read_products`), image
+  upload (`write_files`; paste an image URL instead), countdowns, GIFs, video.
+
 ## 5. Shopify Flow architecture
 
 No custom Flow trigger and no Shopify Plus requirement. The app only writes data; the merchant's workflow starts from
@@ -122,8 +149,11 @@ Flow's native **Customer tags added** trigger.
   `trekiva_welcome_email_sent`.
 - The app never adds `trekiva_welcome_email_sent`. A `customers/update` webhook reads it (one targeted query, only
   for customers with a claim waiting for Flow) and marks the claim `EMAIL_SENT`. No per-row Shopify calls in the admin.
-- **Caveats.** A customer who already has `trekiva_welcome_claimed` will not start Flow again (the tag add is a no-op):
-  remove the tag in Shopify admin and retry. Flow adds the sent tag even if Shopify Email skips an unsubscribed
+- **Caveats.** Flow starts only when the tag is *added*. A NEW claim for a customer who still carries
+  `trekiva_welcome_claimed` (their earlier claim was deleted, or another campaign) therefore removes our tag and adds it
+  again. A retry never does, because its tag may be ours from an attempt whose response was lost. **The workflow's tag
+  condition is essential**: customers are also created with the tag `trekiva-welcome-popup`, which can fire the same
+  trigger before any code exists. Flow adds the sent tag even if Shopify Email skips an unsubscribed
   customer, so those claims stay "Not subscribed" rather than "Email sent". Shopify does not confirm that Shopify
   Email's template can render customer metafields; verify with a test email.
 

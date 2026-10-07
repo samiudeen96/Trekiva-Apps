@@ -1,4 +1,5 @@
 import type { CampaignInput } from "./schema";
+import { defaultEmail } from "../email/defaults";
 
 export const defaultCampaign: CampaignInput = {
   discountId: null,
@@ -8,7 +9,6 @@ export const defaultCampaign: CampaignInput = {
     description: "Enter your email to receive your welcome offer.",
     emailPlaceholder: "Enter your email",
     buttonText: "Get 10% Off",
-    consentLabel: "Email me offers and news",
     successTitle: "Check your inbox 🎉",
     successMessage: "Check your inbox for your 10% welcome offer.",
     alreadyClaimedTitle: "Already claimed",
@@ -16,7 +16,7 @@ export const defaultCampaign: CampaignInput = {
       "You’ve already claimed your welcome offer. Please check your previous email for your discount code.",
     notEligibleTitle: "Welcome back",
     notEligibleMessage: "This welcome offer is available for first-time customers only.",
-    privacyText: "Tick the box to receive marketing emails. Unsubscribe anytime.",
+    privacyText: "By signing up you agree to receive marketing emails. Unsubscribe anytime.",
   },
   design: {
     backgroundColor: "#ffffff",
@@ -41,4 +41,5 @@ export const defaultCampaign: CampaignInput = {
     frequencyDays: 7,
     firstPurchaseOnly: false,
   },
+  email: defaultEmail,
 };

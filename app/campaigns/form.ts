@@ -1,3 +1,4 @@
+import { emailTemplateSchema } from "../email/schema";
 import {
   contentSchema,
   designSchema,
@@ -60,6 +61,19 @@ export function parseCampaignForm(fd: FormData): ParseResult {
   if (rules.data.pages === "specific" && rules.data.specificUrls.length === 0) {
     return { ok: false, errors: { "rules.specificUrls": "Add at least one URL" } };
   }
+  // The email editor keeps its template as one JSON document (a block editor does not map to flat fields).
+  let emailRaw: unknown = undefined;
+  try {
+    const json = str(fd, "email");
+    emailRaw = json ? JSON.parse(json) : undefined;
+  } catch {
+    return { ok: false, errors: { email: "The email template could not be read. Reload and try again." } };
+  }
+  const email = emailTemplateSchema.safeParse(emailRaw);
+  if (!email.success) {
+    const i = email.error.issues[0];
+    return { ok: false, errors: { email: `Email: ${i.path.length ? i.path.join(" > ") + ": " : ""}${i.message}` } };
+  }
   const discountId = discountIdSchema.safeParse(str(fd, "discountId") || null);
   if (!discountId.success) {
     return { ok: false, errors: { discountId: "Select a valid Shopify discount" } };
@@ -72,6 +86,7 @@ export function parseCampaignForm(fd: FormData): ParseResult {
       content: content.data,
       design: design.data,
       rules: rules.data,
+      email: email.data,
     },
   };
 }

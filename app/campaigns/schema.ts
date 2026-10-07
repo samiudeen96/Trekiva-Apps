@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { EmailTemplate } from "../email/schema";
 
 const hexColor = z.string().regex(/^#[0-9a-fA-F]{6}$/, "Use a 6-digit hex color");
 const text = (max: number) => z.string().trim().min(1).max(max);
@@ -9,7 +10,6 @@ export const contentSchema = z.object({
   description: optionalText(400),
   emailPlaceholder: text(60),
   buttonText: text(40),
-  consentLabel: text(120),
   successTitle: text(120),
   successMessage: text(400),
   alreadyClaimedTitle: text(120),
@@ -77,4 +77,6 @@ export interface CampaignInput {
   content: CampaignContent;
   design: CampaignDesign;
   rules: CampaignRules;
+  /** The welcome email's template. Sent by the app only when Resend is configured. */
+  email: EmailTemplate;
 }

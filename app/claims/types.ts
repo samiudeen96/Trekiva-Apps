@@ -1,5 +1,5 @@
 /** Which fulfilment step a failed claim stopped at (legacy rows may also hold "flow"). */
-export type ClaimFailureStep = "customer" | "discount" | "metafields" | "tag";
+export type ClaimFailureStep = "customer" | "discount" | "metafields" | "tag" | "email";
 
 export type ClaimStatus = "claimed" | "already_claimed" | "not_eligible";
 
@@ -30,6 +30,8 @@ export type EmailEligibility = "SUBSCRIBED" | "NOT_SUBSCRIBED" | "UNKNOWN";
 export interface CustomerRecord {
   /** Customer GID */
   id: string;
+  /** For the email greeting; null when Shopify has none (a customer created from just an email). */
+  firstName?: string | null;
   emailEligibility: EmailEligibility;
   /** The customer already carried the claim tag before this attempt, so adding it will not start Flow. */
   alreadyTagged: boolean;
@@ -58,13 +60,35 @@ export interface CustomerGateway {
     campaignId: string;
     claimId: string;
   }): Promise<void>;
-  /** Adds the trekiva_welcome_claimed tag without touching other tags. Idempotent; throws on failure. */
-  addClaimTag(input: { customerId: string }): Promise<void>;
+  /**
+   * Adds the trekiva_welcome_claimed tag without touching other tags. Idempotent; throws on failure.
+   * `restart` first removes our own tag if present: Flow only starts when the tag is ADDED, so a customer
+   * who still carries it from an earlier (deleted) claim would otherwise never be emailed.
+   */
+  addClaimTag(input: { customerId: string; restart?: boolean }): Promise<void>;
 }
 
 export interface DiscountCodeGateway {
   /** Adds `code` to the Shopify discount; resolves once it is redeemable. Idempotent. */
   issueCode(input: { discountId: string; code: string }): Promise<void>;
+}
+
+export interface WelcomeEmailInput {
+  claimId: string;
+  shopDomain: string;
+  email: string;
+  customerId: string;
+  firstName: string | null;
+  discountCode: string;
+  /** SUBSCRIBED gets the merchant's template; anyone else gets only their code. */
+  emailEligibility: EmailEligibility;
+  template: import("../email/schema").EmailTemplate;
+}
+
+/** Sends the claim's email itself (Resend). Absent when the merchant has not configured it. */
+export interface EmailGateway {
+  /** Idempotent per claim; throws on any failure so the claim can be retried. */
+  sendWelcomeOffer(input: WelcomeEmailInput): Promise<void>;
 }
 
 export class CampaignUnavailableError extends Error {}

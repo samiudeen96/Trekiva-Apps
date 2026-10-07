@@ -18,11 +18,15 @@ describe("toPublicCampaign", () => {
       content: d.content,
       design: d.design,
       rules: d.rules,
+      email: {},
       createdAt: new Date(),
       updatedAt: new Date(),
     } as Campaign;
     const json = JSON.stringify(toPublicCampaign(campaign));
     expect(json).not.toContain("WELCOME10");
+    // The email template (and its footer address) is merchant-private: never sent to the storefront.
+    expect(Object.keys(JSON.parse(json)).sort()).toEqual(["content", "design", "id", "rules", "template"]);
+    expect(json).not.toMatch(/"sections"|"footer"|"brand"/);
     expect(json).not.toContain("DiscountCodeNode");
     expect(json).not.toContain("secret-shop");
     expect(toPublicCampaign(campaign).id).toBe("c1");

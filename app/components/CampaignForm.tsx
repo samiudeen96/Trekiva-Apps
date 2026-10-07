@@ -6,6 +6,7 @@ import type { DiscountSummary } from "../discounts/types";
 import type { CampaignInput, CampaignContent } from "../campaigns/schema";
 import { parseCampaignForm, type FieldErrors } from "../campaigns/form";
 import { CampaignPreview } from "./CampaignPreview";
+import { EmailEditor } from "./EmailEditor";
 
 interface Props {
   initial: CampaignInput;
@@ -13,6 +14,11 @@ interface Props {
   heading: string;
   /** null when Shopify could not be reached */
   discounts: DiscountSummary[] | null;
+  /** True when Resend is configured, so the app (not Shopify Flow) sends the welcome email. */
+  emailEnabled?: boolean;
+  /** Name shown where the email says {{shop_name}}. */
+  shopName?: string;
+  testResult?: { ok: boolean; message: string } | null;
 }
 
 const contentFields: [keyof CampaignContent, string, boolean][] = [
@@ -20,7 +26,6 @@ const contentFields: [keyof CampaignContent, string, boolean][] = [
   ["description", "Description", true],
   ["emailPlaceholder", "Email placeholder", false],
   ["buttonText", "Button text", false],
-  ["consentLabel", "Marketing checkbox label", false],
   ["successTitle", "Success title", false],
   ["successMessage", "Success message", true],
   ["alreadyClaimedTitle", "Already claimed title", false],
@@ -47,11 +52,12 @@ function readForm(form: HTMLFormElement): FormData {
   return fd;
 }
 
-export function CampaignForm({ initial, errors = {}, heading, discounts }: Props) {
+export function CampaignForm({ initial, errors = {}, heading, discounts, emailEnabled = false, shopName = "Your store", testResult }: Props) {
   const formRef = useRef<HTMLFormElement>(null);
   const submit = useSubmit();
   const [discountId, setDiscountId] = useState(initial.discountId ?? "");
   const [preview, setPreview] = useState<CampaignInput>(initial);
+  const [email, setEmail] = useState(initial.email);
 
   const sync = useCallback(() => {
     if (!formRef.current) return;
@@ -280,33 +286,53 @@ export function CampaignForm({ initial, errors = {}, heading, discounts }: Props
           </s-stack>
         </s-section>
 
-        <s-section heading="7. Email automation">
-          <s-stack gap="small-200">
-            <s-text>
-              Email automation: <s-text type="strong">Shopify Flow via customer tag</s-text>. Trekiva does not send
-              the email itself.
-            </s-text>
-            <s-text>
-              After a claim, Trekiva saves the customer&apos;s code in the metafields
-              trekiva.welcome_discount_code, welcome_offer_claimed and welcome_claimed_at, then adds the tag{" "}
-              <s-text type="strong">{TAG_CLAIMED}</s-text> last.
-            </s-text>
-            <s-text>1. In Shopify Flow, create a workflow with the trigger Customer tags added.</s-text>
-            <s-text>2. Add a condition: tags contain {TAG_CLAIMED}.</s-text>
-            <s-text>3. Add the action Send marketing email, using the customer metafield trekiva.welcome_discount_code.</s-text>
-            <s-text>4. Add the action Add customer tags: {TAG_EMAIL_SENT}. Trekiva reads it to show Email sent.</s-text>
-            <s-text color="subdued">
-              Duplicate prevention happens in Trekiva, so your Flow needs no checks for it. Shopify Email only
-              reaches customers who are subscribed to email marketing. Trekiva subscribes a customer only when they
-              tick the checkbox in the popup; a customer who does not still gets a valid code, but may get no email.
-              Check Settings for the required metafield definitions.
-            </s-text>
-          </s-stack>
+        <s-section heading="7. Email delivery">
+          {emailEnabled ? (
+            <s-stack gap="small-200">
+              <s-text>
+                The app sends the welcome email itself, using the template in step 8. Shopify Flow is not needed:
+                turn off any Flow workflow that emails this offer so customers do not get it twice.
+              </s-text>
+              <s-text color="subdued">
+                Customers subscribed to email marketing get your full template. Anyone else gets a short message with
+                only their code. Submitting the popup subscribes new customers and customers who never chose; customers
+                who unsubscribed earlier stay unsubscribed.
+              </s-text>
+            </s-stack>
+          ) : (
+            <s-stack gap="small-200">
+                <s-text>
+                  Email automation: <s-text type="strong">Shopify Flow via customer tag</s-text>. Trekiva does not send
+                  the email itself.
+                </s-text>
+                <s-text>
+                  After a claim, Trekiva saves the customer&apos;s code in the metafields
+                  trekiva.welcome_discount_code, welcome_offer_claimed and welcome_claimed_at, then adds the tag{" "}
+                  <s-text type="strong">{TAG_CLAIMED}</s-text> last.
+                </s-text>
+                <s-text>1. In Shopify Flow, create a workflow with the trigger Customer tags added.</s-text>
+                <s-text>2. Add a condition: tags contain {TAG_CLAIMED}.</s-text>
+                <s-text>3. Add the action Send marketing email, using the customer metafield trekiva.welcome_discount_code.</s-text>
+                <s-text>4. Add the action Add customer tags: {TAG_EMAIL_SENT}. Trekiva reads it to show Email sent.</s-text>
+                <s-text color="subdued">
+                  Duplicate prevention happens in Trekiva, so your Flow needs no checks for it. Shopify Email only
+                  reaches customers who are subscribed to email marketing. Submitting the popup subscribes new customers and
+                  customers who never chose, so keep the privacy text saying they will receive marketing emails.
+                  Customers who unsubscribed earlier stay unsubscribed: they still get a valid code, but Shopify Email
+                  skips them and their claim shows Not subscribed. Check Settings for the required metafield definitions. Shopify Email cannot put a different code in each customer&apos;s email, so to show each customer their own code, set up sending from the app (Settings shows what is needed).
+                </s-text>
+              </s-stack>
+          )}
         </s-section>
-        <s-section heading="8. Preview">
+        <s-section heading="8. Welcome email">
+          <EmailEditor value={email} onChange={setEmail} enabled={emailEnabled} shopName={shopName} testResult={testResult} />
+          {errors.email && <s-banner tone="critical">{errors.email}</s-banner>}
+        </s-section>
+
+        <s-section heading="9. Preview">
           <CampaignPreview input={preview} />
         </s-section>
-        <s-section heading="9. Publish">
+        <s-section heading="10. Publish">
           <s-text color="subdued">Set Status to Active and save to publish.</s-text>
         </s-section>
       </s-page>

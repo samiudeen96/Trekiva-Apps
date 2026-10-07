@@ -70,7 +70,25 @@ No Shopify Plus requirement: the workflow starts from Flow's native **Customer t
 5. **Settings → Create metafield definitions** (or add the five `trekiva.*` customer metafields under Settings → Custom data).
 6. Shopify Flow: create a workflow with trigger **Customer tags added** → condition tags contain `trekiva_welcome_claimed` → action **Send marketing email** (use the customer metafield `trekiva.welcome_discount_code`) → action **Add customer tags** `trekiva_welcome_email_sent`. Turn it on. Send yourself a test first: Shopify does not document that Shopify Email can render customer metafields.
 7. Create a campaign, select the discount, set status **Active**, save.
-8. Test with a fresh email and **tick the marketing checkbox**: expect the success message and an email with a unique code (e.g. `WELCOME10-7KQ2M9XH`). Submit again: expect "Already claimed" and no second email. Without the checkbox the claim and code are valid, but Shopify Email will not send to an unsubscribed customer.
+8. Test with a fresh email: expect the success message and an email with a unique code (e.g. `WELCOME10-7KQ2M9XH`). Submit again: expect "Already claimed" and no second email. A customer who unsubscribed earlier still gets a valid code, but Shopify Email will not send to them.
+
+## 4b. Send the welcome email from the app (optional)
+
+Do this to show each customer their own code in the email. Until it is done, nothing changes: Shopify Flow keeps sending.
+
+1. Create a Resend account and an API key (sending access is enough).
+2. In Resend, add and verify your sending domain (DNS records). `EMAIL_FROM` must be on it.
+3. Set on the server, then restart: `RESEND_API_KEY=...`, `EMAIL_FROM="Trekiva <care@trekiva.com>"` and optionally
+   `EMAIL_REPLY_TO=...`. (Both of the first two must be set; docker-compose already passes them through.)
+4. `npx prisma migrate deploy` (two additive migrations: `campaigns.email` and `welcome_offer_claims.delivery`).
+5. **Settings** should now show "Welcome email sending: OK". Edit your campaign, open step 8 "Welcome email", design the
+   email and use **Send test** to see it in your own inbox.
+6. **Turn off the Shopify Flow email workflow.** New claims are sent by the app and get no Flow tag, so a workflow left on
+   would do nothing for them, but switching it off avoids any chance of a duplicate.
+7. Claims made before this stay with Flow and are never emailed again by the app.
+
+Notes: use JPG or PNG images (Outlook cannot show WebP). The email's button links to
+`https://<shop>.myshopify.com/discount/<CODE>`, which applies the code and redirects to your store.
 
 ## 5. Operations
 - Failed claims: **Settings** shows why each one failed (customer, discount, metafields or tag step) and has a **Retry failed claims** button. It also checks that every active campaign's Shopify discount still exists and is live.

@@ -1,5 +1,9 @@
 import { z } from "zod";
 
+// docker compose passes an unset variable through as "", which must mean "not configured", not "invalid".
+const blankAsUnset = <T extends z.ZodType>(t: T) =>
+  z.preprocess((v) => (typeof v === "string" && v.trim() === "" ? undefined : v), t.optional());
+
 const schema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   SHOPIFY_API_KEY: z.string().min(1),
@@ -20,6 +24,12 @@ const schema = z.object({
     .enum(["silent", "fatal", "error", "warn", "info", "debug", "trace"])
     .default("info"),
   CLAIM_RATE_LIMIT_PER_MIN: z.coerce.number().int().positive().default(10),
+  // Resend sends the welcome email. Both unset = the app sends nothing and Shopify Flow does (the
+  // earlier setup), so deploying this change never breaks a store that has not configured Resend yet.
+  RESEND_API_KEY: blankAsUnset(z.string().min(1)),
+  // RFC 5322 sender on a domain verified in Resend, e.g. "Trekiva <care@trekiva.com>".
+  EMAIL_FROM: blankAsUnset(z.string().min(3)),
+  EMAIL_REPLY_TO: blankAsUnset(z.string().email()),
 });
 
 export type Env = z.infer<typeof schema>;

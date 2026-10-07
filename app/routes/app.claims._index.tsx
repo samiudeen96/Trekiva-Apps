@@ -27,7 +27,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       claimedAt: c.claimedAt.toISOString(),
       status: c.emailStatus,
       eligibility: c.emailEligibility,
-      handoff: handoffLabel(c.flowHandoffAt, c.emailStatus),
+      handoff: handoffLabel(c.flowHandoffAt, c.emailStatus, c.delivery),
     })),
   };
 };

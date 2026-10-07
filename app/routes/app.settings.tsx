@@ -12,6 +12,7 @@ import {
 } from "../utils/health.server";
 import { TAG_CLAIMED, TAG_EMAIL_SENT } from "../claims/handoff";
 import { ensureMetafieldDefinitions } from "../shopify/handoff.server";
+import { createEmailGateway, emailConfig } from "../email/email.server";
 import { claimRepository } from "../repositories/claim.repository";
 import { campaignRepository } from "../repositories/campaign.repository";
 import { getCodeDiscount } from "../discounts/discounts.server";
@@ -28,6 +29,7 @@ const stepLabel: Record<string, string> = {
   discount: "Adding the discount code",
   metafields: "Writing the customer metafields",
   tag: "Adding the Flow trigger tag",
+  email: "Sending the welcome email",
   flow: "Triggering Shopify Flow (legacy)",
 };
 
@@ -45,6 +47,17 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     checkMetafieldDefinitions(admin),
   ]);
   const access = checkWriteAccess(session.scope);
+  const mail = emailConfig();
+  // With Resend configured the app sends the email itself, so Flow and its metafields are optional.
+  const emailSending: Check = mail
+    ? {
+        ok: true,
+        detail: `The app sends the welcome email from ${mail.from}. Turn off any Shopify Flow email workflow so customers are not emailed twice, and make sure the sending domain is verified in Resend.`,
+      }
+    : {
+        ok: false,
+        detail: "Not configured: Shopify Flow sends the email. Set RESEND_API_KEY and EMAIL_FROM to send from the app with your own template.",
+      };
   const activeCampaign: Check =
     campaigns.length > 0
       ? { ok: true, detail: `${campaigns.length} active campaign(s)` }
@@ -55,7 +68,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const appReady = [shopifyChecks.shopify, shopifyChecks.scopes, access.customers, access.discounts, database, definitions].every(
     (c) => c.ok,
   );
-  const flow: Check = !appReady
+  const flow: Check = mail
+    ? { ok: true, detail: "Not used: the app sends the email, so no Flow workflow is needed." }
+    : !appReady
     ? { ok: false, detail: "Not ready: fix the checks above first" }
     : stats.failed > 0
       ? { ok: false, detail: `${stats.failed} claim(s) failed before the Flow handoff` }
@@ -75,10 +90,12 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       ["Database", database],
       ["Active campaign", activeCampaign],
       ["Linked Shopify discount", discounts],
-      ["Customer metafield definitions", definitions],
+      ["Welcome email sending", emailSending],
+      ["Customer metafield definitions", mail ? { ok: true, detail: `Optional: the app sends the email. ${definitions.detail}` } : definitions],
       ["Shopify Flow integration", flow],
     ] as [string, Check][],
-    definitionsMissing: definitions.missing.length > 0,
+    definitionsMissing: !mail && definitions.missing.length > 0,
+    appSendsEmail: Boolean(mail),
     triggerTag: TAG_CLAIMED,
     sentTag: TAG_EMAIL_SENT,
     failedTotal: stats.failed,
@@ -107,7 +124,12 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   if (intent !== "retry-failed") return { retry: null, definitions: null };
 
   const rows = await claimRepository.failed(session.shop, RETRY_BATCH);
-  const service = new ClaimService(createCustomerGateway(admin), createDiscountCodeGateway(admin));
+  const mail = emailConfig();
+  const service = new ClaimService(
+    createCustomerGateway(admin),
+    createDiscountCodeGateway(admin),
+    mail ? createEmailGateway(mail) : undefined,
+  );
   const retry = await retryClaims(rows, ({ campaignId, email }) =>
     service.claim({ shopDomain: session.shop, campaignId, email }),
   );
@@ -115,7 +137,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export default function Settings() {
-  const { checks, appUrl, shop, proxyPath, failures, failedTotal, definitionsMissing, triggerTag, sentTag } =
+  const { checks, appUrl, shop, proxyPath, failures, failedTotal, definitionsMissing, appSendsEmail, triggerTag, sentTag } =
     useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
   const result = actionData?.retry;
@@ -139,6 +161,7 @@ export default function Settings() {
         </s-stack>
       </s-section>
 
+      {!appSendsEmail && (
       <s-section heading="Shopify Flow setup">
         <s-stack gap="small-200">
           <s-text>
@@ -169,6 +192,7 @@ export default function Settings() {
           )}
         </s-stack>
       </s-section>
+      )}
 
       {failedTotal > 0 && (
         <s-section heading="Failed claims">
@@ -180,7 +204,7 @@ export default function Settings() {
               </s-banner>
             )}
             <s-text color="subdued">
-              These customers claimed an offer but were not handed over to Shopify Flow, so no email was sent. Fix the cause below, then retry.
+              These customers claimed an offer but their email was not sent. Fix the cause below, then retry.
               {failedTotal > failures.length ? ` Showing the latest ${failures.length} of ${failedTotal}.` : ""}
             </s-text>
             {failures.map((f) => (

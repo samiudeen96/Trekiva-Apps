@@ -11,7 +11,7 @@ import { gql } from "./graphql.server";
 export const FIND_CUSTOMER = `#graphql
   query TrekivaFindCustomer($query: String!) {
     customers(first: 1, query: $query) {
-      nodes { id numberOfOrders tags defaultEmailAddress { marketingState } }
+      nodes { id firstName numberOfOrders tags defaultEmailAddress { marketingState } }
     }
   }
 `;
@@ -43,6 +43,15 @@ export const SET_METAFIELDS = `#graphql
   }
 `;
 
+export const REMOVE_TAGS = `#graphql
+  mutation TrekivaRemoveClaimTag($id: ID!, $tags: [String!]!) {
+    tagsRemove(id: $id, tags: $tags) {
+      node { id }
+      userErrors { field message }
+    }
+  }
+`;
+
 export const ADD_TAGS = `#graphql
   mutation TrekivaAddClaimTag($id: ID!, $tags: [String!]!) {
     tagsAdd(id: $id, tags: $tags) {
@@ -54,6 +63,7 @@ export const ADD_TAGS = `#graphql
 
 interface FoundCustomer {
   id: string;
+  firstName?: string | null;
   /** UnsignedInt64, so the Admin API returns it as a string. */
   numberOfOrders: string;
   tags?: string[];
@@ -98,7 +108,7 @@ async function withConsent(
   const state = c.defaultEmailAddress?.marketingState;
   const alreadyTagged = hasClaimTag(c.tags);
   if (!(marketingConsent && state === "NOT_SUBSCRIBED")) {
-    return { id: c.id, emailEligibility: eligibilityFor(state), alreadyTagged };
+    return { id: c.id, firstName: c.firstName ?? null, emailEligibility: eligibilityFor(state), alreadyTagged };
   }
 
   const data = await gql(admin, SUBSCRIBE_CUSTOMER, {
@@ -108,7 +118,22 @@ async function withConsent(
   if (errs?.length) {
     throw new Error(`customerEmailMarketingConsentUpdate failed: ${JSON.stringify(errs)}`);
   }
-  return { id: c.id, emailEligibility: "SUBSCRIBED", alreadyTagged };
+  return { id: c.id, firstName: c.firstName ?? null, emailEligibility: "SUBSCRIBED", alreadyTagged };
+}
+
+/**
+ * Marks the customer unsubscribed from email marketing. Used by the unsubscribe link in the welcome
+ * email, so Shopify stays the single record of consent.
+ */
+export async function unsubscribeCustomer(admin: AdminGraphqlClient, customerId: string): Promise<void> {
+  const data = await gql(admin, SUBSCRIBE_CUSTOMER, {
+    input: {
+      customerId,
+      emailMarketingConsent: { marketingState: "UNSUBSCRIBED", consentUpdatedAt: new Date().toISOString() },
+    },
+  });
+  const errs = data.customerEmailMarketingConsentUpdate.userErrors;
+  if (errs?.length) throw new Error(`customerEmailMarketingConsentUpdate failed: ${JSON.stringify(errs)}`);
 }
 
 export function createCustomerGateway(admin: AdminGraphqlClient): CustomerGateway {
@@ -138,6 +163,7 @@ export function createCustomerGateway(admin: AdminGraphqlClient): CustomerGatewa
       if (customer?.id) {
         return {
           id: customer.id as string,
+          firstName: null,
           emailEligibility: marketingConsent ? "SUBSCRIBED" : "NOT_SUBSCRIBED",
           alreadyTagged: false,
         };
@@ -171,8 +197,16 @@ export function createCustomerGateway(admin: AdminGraphqlClient): CustomerGatewa
       if (errs?.length) throw new Error(`metafieldsSet failed: ${JSON.stringify(errs)}`);
     },
 
-    /** tagsAdd only adds: existing tags are kept and a tag already present is a no-op. */
-    async addClaimTag({ customerId }) {
+    /**
+     * Only ever touches our own tag: tagsAdd keeps every other tag, and a tag already present is a no-op.
+     * With `restart` the tag is removed first so the add is a real change that starts Flow again.
+     */
+    async addClaimTag({ customerId, restart }) {
+      if (restart) {
+        const removed = await gql(admin, REMOVE_TAGS, { id: customerId, tags: [TAG_CLAIMED] });
+        const rerrs = removed.tagsRemove.userErrors;
+        if (rerrs?.length) throw new Error(`tagsRemove failed: ${JSON.stringify(rerrs)}`);
+      }
       const data = await gql(admin, ADD_TAGS, { id: customerId, tags: [TAG_CLAIMED] });
       const errs = data.tagsAdd.userErrors;
       if (errs?.length) throw new Error(`tagsAdd failed: ${JSON.stringify(errs)}`);

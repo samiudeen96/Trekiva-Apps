@@ -60,6 +60,15 @@ enum EmailStatus {
   EMAIL_SENT
 }
 
+// Who sends this claim's email. Fixed when the claim is created, so switching modes later never
+// emails an already-handled claim a second time.
+enum EmailDelivery {
+  // Shopify Flow sends it (the app adds the tag that starts the workflow).
+  FLOW
+  // The app sends it itself through Resend.
+  APP
+}
+
 // Whether Shopify Email may send marketing email to this customer. Separate from the claim itself:
 // an unsubscribed customer still holds a valid code.
 enum EmailEligibility {
@@ -85,6 +94,8 @@ model Campaign {
   content       Json
   design        Json
   rules         Json
+  // Email template (sections + brand), validated with zod in app/email. {} = the default template.
+  email         Json           @default("{}")
 
   createdAt     DateTime       @default(now()) @map("created_at")
   updatedAt     DateTime       @updatedAt @map("updated_at")
@@ -111,6 +122,7 @@ model WelcomeOfferClaim {
   emailSentAt       DateTime?   @map("email_sent_at")
   emailStatus       EmailStatus @default(PENDING) @map("email_status")
   emailEligibility  EmailEligibility @default(UNKNOWN) @map("email_eligibility")
+  delivery          EmailDelivery @default(FLOW) @map("delivery")
   // The popup's explicit marketing checkbox, kept so a retry reuses the original consent.
   marketingConsent  Boolean     @default(false) @map("marketing_consent")
   // Why the last fulfilment attempt failed (customer | discount | metafields | tag). Cleared on success.

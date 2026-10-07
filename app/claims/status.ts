@@ -35,7 +35,12 @@ export const eligibilityLabel: Record<EmailEligibility, string> = {
 };
 
 /** Claim-side state, independent of email: did the app finish handing the claim to Shopify Flow? */
-export function handoffLabel(flowHandoffAt: Date | string | null, status: EmailStatus): string {
+export function handoffLabel(
+  flowHandoffAt: Date | string | null,
+  status: EmailStatus,
+  delivery: "FLOW" | "APP" = "FLOW",
+): string {
+  if (delivery === "APP") return "Not used";
   if (flowHandoffAt || status === "TRIGGERED" || status === "SENT" || status === "NOT_SUBSCRIBED") return "Ready";
   return status === "FAILED" ? "Failed" : "Pending";
 }

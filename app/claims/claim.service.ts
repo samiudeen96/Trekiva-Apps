@@ -14,7 +14,9 @@ import {
   type ClaimOutcome,
   type CustomerGateway,
   type DiscountCodeGateway,
+  type EmailGateway,
 } from "./types";
+import { resolveEmailTemplate } from "../email/defaults";
 
 const emailSchema = z.string().max(254).email();
 /** A PENDING claim older than this is treated as a crashed attempt and may be retried. */
@@ -39,6 +41,8 @@ export class ClaimService {
   constructor(
     private readonly customers: CustomerGateway,
     private readonly discountCodes: DiscountCodeGateway,
+    /** Absent when Resend is not configured: Shopify Flow then delivers, exactly as before. */
+    private readonly email?: EmailGateway,
   ) {}
 
   /**
@@ -51,6 +55,7 @@ export class ClaimService {
     campaignId: string;
     emailNormalized: string;
     marketingConsent: boolean;
+    delivery: "FLOW" | "APP";
     baseCode: string;
   }) {
     const { baseCode, ...row } = input;
@@ -131,16 +136,22 @@ export class ClaimService {
       return notEligible;
     }
 
+    // Who delivers this claim is fixed when it is created, so changing the configuration later can
+    // never email an already-handled claim a second time.
+    const delivery: "FLOW" | "APP" = this.email ? "APP" : "FLOW";
+
     let claimId: string;
     let claimedAt: Date;
     let code: string;
     let consent: boolean;
     let firstAttempt: boolean;
+    let mode: "FLOW" | "APP";
     const row = await this.insertClaim({
       shopDomain,
       campaignId,
       emailNormalized: normalized,
       marketingConsent,
+      delivery,
       baseCode: campaign.discountCode,
     });
     if (row) {
@@ -149,9 +160,11 @@ export class ClaimService {
       code = row.discountCode;
       consent = row.marketingConsent;
       firstAttempt = true;
+      mode = row.delivery;
     } else {
-      // Existing claim: it only gets another fulfilment attempt if a previous attempt
-      // failed BEFORE the Flow handoff (the tag). The compare-and-set lets exactly one request retry.
+      // Existing claim: it only gets another fulfilment attempt if a previous attempt did not finish.
+      // "Finished" depends on who delivers it: the Flow tag for FLOW claims, the sent email for APP
+      // claims. The compare-and-set lets exactly one request retry.
       const existing = await db.welcomeOfferClaim.findUnique({
         where: {
           shopDomain_campaignId_emailNormalized: {
@@ -161,12 +174,14 @@ export class ClaimService {
           },
         },
       });
-      if (!existing || existing.flowHandoffAt || existing.flowTriggeredAt) return already;
+      if (!existing || existing.flowTriggeredAt) return already;
+      const unsettled = existing.delivery === "APP" ? { emailSentAt: null } : { flowHandoffAt: null };
+      if (existing.delivery === "APP" ? existing.emailSentAt : existing.flowHandoffAt) return already;
 
       const lock = await db.welcomeOfferClaim.updateMany({
         where: {
           id: existing.id,
-          flowHandoffAt: null,
+          ...unsettled,
           flowTriggeredAt: null,
           OR: [
             { emailStatus: "FAILED" },
@@ -182,6 +197,7 @@ export class ClaimService {
       code = existing.discountCode;
       consent = existing.marketingConsent;
       firstAttempt = false;
+      mode = existing.delivery;
     }
 
     let step: ClaimFailureStep = "customer";
@@ -194,6 +210,40 @@ export class ClaimService {
       // The code must be redeemable before the customer can be told about it.
       step = "discount";
       await this.discountCodes.issueCode({ discountId, code });
+
+      if (mode === "APP") {
+        // The app sends the email, so Flow has nothing to do: no tag (a workflow left switched on
+        // could otherwise send a second email). Metafields are only mirrored, after the send.
+        step = "email";
+        if (!this.email) throw new Error("Email sending is not configured (RESEND_API_KEY / EMAIL_FROM)");
+        await this.email.sendWelcomeOffer({
+          claimId,
+          shopDomain,
+          email: normalized,
+          customerId: customer.id,
+          firstName: customer.firstName ?? null,
+          discountCode: code,
+          emailEligibility: customer.emailEligibility,
+          template: resolveEmailTemplate(campaign.email),
+        });
+        await db.welcomeOfferClaim.update({
+          where: { id: claimId },
+          data: { emailSentAt: new Date(), emailStatus: "EMAIL_SENT", failureStep: null, failureReason: null },
+        });
+        try {
+          await this.customers.writeClaimMetafields({
+            customerId: customer.id,
+            discountCode: code,
+            claimedAt,
+            campaignId,
+            claimId,
+          });
+        } catch (err) {
+          logger.warn({ err, claimId }, "email sent, but the customer metafields could not be mirrored");
+        }
+        return claimed;
+      }
+
       step = "metafields";
       await this.customers.writeClaimMetafields({
         customerId: customer.id,
@@ -202,15 +252,13 @@ export class ClaimService {
         campaignId,
         claimId,
       });
-      // Flow starts on this tag, so it goes last. A customer who already has it will not start Flow again.
+      // Flow starts when this tag is ADDED, so it goes last. A brand new claim for a customer who still has the
+      // tag (their earlier claim was deleted, or another campaign) must re-add it or Flow never fires. A retry must
+      // NOT: its tag may be ours from an attempt whose response was lost, and Flow has already started for it.
       step = "tag";
-      if (firstAttempt && customer.alreadyTagged) {
-        logger.warn(
-          { claimId, shopDomain, campaignId },
-          "customer already had the claim tag: Flow will not start for this claim until the tag is removed and re-added",
-        );
-      }
-      await this.customers.addClaimTag({ customerId: customer.id });
+      const restart = firstAttempt && customer.alreadyTagged;
+      if (restart) logger.info({ claimId, shopDomain, campaignId }, "customer already had the claim tag: re-adding it to start Flow");
+      await this.customers.addClaimTag({ customerId: customer.id, restart });
       await db.welcomeOfferClaim.update({
         where: { id: claimId },
         data: {
@@ -224,7 +272,7 @@ export class ClaimService {
       logger.error({ err, claimId, shopDomain, campaignId, step }, "claim fulfilment failed");
       await db.welcomeOfferClaim
         .updateMany({
-          where: { id: claimId, flowHandoffAt: null },
+          where: { id: claimId, ...(mode === "APP" ? { emailSentAt: null } : { flowHandoffAt: null }) },
           data: {
             emailStatus: "FAILED",
             failureStep: step,

@@ -3,10 +3,12 @@ import {
   ADD_TAGS,
   CREATE_CUSTOMER,
   FIND_CUSTOMER,
+  REMOVE_TAGS,
   SET_METAFIELDS,
   SUBSCRIBE_CUSTOMER,
   createCustomerGateway,
   eligibilityFor,
+  unsubscribeCustomer,
 } from "./customers.server";
 
 const ID = "gid://shopify/Customer/1";
@@ -38,6 +40,9 @@ function admin(marketingState: string | null | "no-address", extra: { tags?: str
       if (query === SET_METAFIELDS) {
         return Response.json({ data: { metafieldsSet: { metafields: [], userErrors: errs.metafields ?? [] } } });
       }
+      if (query === REMOVE_TAGS) {
+        return Response.json({ data: { tagsRemove: { node: { id: ID }, userErrors: errs.remove ?? [] } } });
+      }
       if (query === ADD_TAGS) {
         return Response.json({ data: { tagsAdd: { node: { id: ID }, userErrors: errs.tags ?? [] } } });
       }
@@ -54,6 +59,7 @@ describe("customer gateway: marketing consent", () => {
     const a = admin(null);
     expect(await createCustomerGateway(a).findOrCreate({ email: "a@b.co", marketingConsent: false })).toEqual({
       id: ID,
+      firstName: null,
       emailEligibility: "NOT_SUBSCRIBED",
       alreadyTagged: false,
     });
@@ -127,6 +133,18 @@ describe("customer gateway: marketing consent", () => {
   });
 });
 
+describe("customer gateway: greeting name", () => {
+  it("returns an existing customer's first name for the email greeting", async () => {
+    const a = admin("SUBSCRIBED");
+    a.graphql.mockImplementationOnce(async () =>
+      Response.json({
+        data: { customers: { nodes: [{ id: ID, firstName: "Asha", numberOfOrders: "0", tags: [], defaultEmailAddress: { marketingState: "SUBSCRIBED" } }] } },
+      }),
+    );
+    expect((await createCustomerGateway(a).findOrCreate({ email: "a@b.co", marketingConsent: false })).firstName).toBe("Asha");
+  });
+});
+
 describe("customer gateway: existing tag", () => {
   it("reports when the customer already carries the claim tag (case-insensitively)", async () => {
     const a = admin("SUBSCRIBED", { tags: ["vip", "Trekiva_Welcome_Claimed"] });
@@ -187,5 +205,29 @@ describe("customer gateway: tag", () => {
   it("treats userErrors as a failure", async () => {
     const a = admin("SUBSCRIBED", { userErrors: { tags: [{ field: ["id"], message: "Customer not found" }] } });
     await expect(createCustomerGateway(a).addClaimTag({ customerId: ID })).rejects.toThrow(/tagsAdd failed/);
+  });
+
+  it("with restart, removes ONLY our tag first and then adds it again", async () => {
+    const a = admin("SUBSCRIBED");
+    await createCustomerGateway(a).addClaimTag({ customerId: ID, restart: true });
+    expect(a.graphql.mock.calls.map(([q]) => q)).toEqual([REMOVE_TAGS, ADD_TAGS]);
+    expect(calls(a, REMOVE_TAGS)[0][1].variables).toEqual({ id: ID, tags: ["trekiva_welcome_claimed"] });
+    expect(calls(a, ADD_TAGS)[0][1].variables).toEqual({ id: ID, tags: ["trekiva_welcome_claimed"] });
+  });
+
+  it("does not add the tag if removing it failed, so the claim fails and is retried", async () => {
+    const a = admin("SUBSCRIBED", { userErrors: { remove: [{ field: ["id"], message: "nope" }] } });
+    await expect(createCustomerGateway(a).addClaimTag({ customerId: ID, restart: true })).rejects.toThrow(/tagsRemove failed/);
+    expect(calls(a, ADD_TAGS)).toHaveLength(0);
+  });
+});
+
+describe("unsubscribeCustomer", () => {
+  it("marks the customer UNSUBSCRIBED in Shopify, the single record of consent", async () => {
+    const a = admin("SUBSCRIBED");
+    await unsubscribeCustomer(a, ID);
+    const [[, { variables }]] = calls(a, SUBSCRIBE_CUSTOMER);
+    expect(variables.input.customerId).toBe(ID);
+    expect(variables.input.emailMarketingConsent.marketingState).toBe("UNSUBSCRIBED");
   });
 });

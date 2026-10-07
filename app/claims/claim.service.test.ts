@@ -17,7 +17,9 @@ import {
   type CustomerGateway,
   type DiscountCodeGateway,
   type EmailEligibility,
+  type EmailGateway,
 } from "./types";
+import { defaultEmail } from "../email/defaults";
 
 const shop = `claim-test-${Date.now()}.myshopify.com`;
 const DISCOUNT_ID = "gid://shopify/DiscountCodeNode/1";
@@ -39,6 +41,9 @@ function build(
     issueCode?: Hook;
     metafields?: Hook;
     tag?: Hook;
+    /** When true the app (not Shopify Flow) sends the email, through this fake Resend gateway. */
+    appEmail?: boolean;
+    sendEmail?: Hook;
     eligibility?: EmailEligibility;
     alreadyTagged?: boolean;
     /** What the first-purchase gate sees; undefined = no Shopify customer for this email yet. */
@@ -68,11 +73,16 @@ function build(
     order.push("tag");
     await overrides.tag?.();
   });
+  const sendWelcomeOffer = vi.fn<EmailGateway["sendWelcomeOffer"]>(async () => {
+    order.push("email");
+    await overrides.sendEmail?.();
+  });
   const service = new ClaimService(
     { findOrCreate, findExisting, writeClaimMetafields, addClaimTag },
     { issueCode },
+    overrides.appEmail ? { sendWelcomeOffer } : undefined,
   );
-  return { service, order, findOrCreate, findExisting, issueCode, writeClaimMetafields, addClaimTag };
+  return { service, order, findOrCreate, findExisting, issueCode, writeClaimMetafields, addClaimTag, sendWelcomeOffer };
 }
 
 /** Turns the first-purchase gate on for the campaign under test. */
@@ -137,7 +147,7 @@ describe("ClaimService: new eligible customer", () => {
       campaignId,
       claimId: row.id,
     });
-    expect(addClaimTag).toHaveBeenCalledWith({ customerId: CUSTOMER_ID });
+    expect(addClaimTag).toHaveBeenCalledWith({ customerId: CUSTOMER_ID, restart: false });
   });
 
   it("every claim gets a different code", async () => {
@@ -309,11 +319,44 @@ describe("ClaimService: Shopify failures and retry", () => {
     expect(ok.flowHandoffAt).not.toBeNull();
   });
 
-  it("a customer who already has the tag still completes (tagsAdd is a no-op)", async () => {
+  it("a NEW claim for a customer who still has the tag re-adds it so Flow starts again", async () => {
+    // e.g. the merchant deleted this customer's earlier claim, or they claimed another campaign.
     const { service, addClaimTag } = build({ alreadyTagged: true });
     expect((await claim(service, "tagged@example.com")).status).toBe("claimed");
     expect(addClaimTag).toHaveBeenCalledTimes(1);
+    expect(addClaimTag).toHaveBeenCalledWith({ customerId: CUSTOMER_ID, restart: true });
     expect((await only()).emailStatus).toBe("READY_FOR_FLOW");
+  });
+
+  it("a RETRY never re-adds the tag: it may be ours from a lost response, and Flow already started", async () => {
+    let fail = true;
+    const { service, findOrCreate, addClaimTag } = build({
+      tag: () => {
+        if (fail) throw new Error("socket hang up");
+      },
+    });
+    await expect(claim(service, "again@example.com")).rejects.toThrow();
+    // The tag really landed in Shopify, so the retry's customer lookup now sees it.
+    findOrCreate.mockResolvedValueOnce({ id: CUSTOMER_ID, emailEligibility: "SUBSCRIBED", alreadyTagged: true });
+    fail = false;
+    expect((await claim(service, "again@example.com")).status).toBe("claimed");
+    expect(addClaimTag).toHaveBeenLastCalledWith({ customerId: CUSTOMER_ID, restart: false });
+  });
+
+  it("a deleted claim can be claimed again by the same email and still ends up handed to Flow", async () => {
+    const { service, addClaimTag } = build();
+    await claim(service, "redo@example.com");
+    const first = await only();
+    await db.welcomeOfferClaim.delete({ where: { id: first.id } });
+
+    const second = build({ alreadyTagged: true });
+    expect((await claim(second.service, "redo@example.com")).status).toBe("claimed");
+    expect(second.addClaimTag).toHaveBeenCalledWith({ customerId: CUSTOMER_ID, restart: true });
+    const row = await only();
+    expect(row.id).not.toBe(first.id);
+    expect(row.discountCode).not.toBe(first.discountCode);
+    expect(row.emailStatus).toBe("READY_FOR_FLOW");
+    expect(addClaimTag).toHaveBeenCalledTimes(1);
   });
 
   it("a lost response after everything succeeded is retried with identical, idempotent writes", async () => {
@@ -494,5 +537,158 @@ describe("ClaimService: first-purchase eligibility", () => {
     findExisting.mockResolvedValue({ id: "gid://shopify/Customer/7", hasOrders: true });
     fail = false;
     expect((await claim(service, "ordered@example.com")).status).toBe("claimed");
+  });
+});
+
+describe("ClaimService: email sent by the app", () => {
+  it("sends the email once, adds NO Flow tag, and mirrors the metafields after", async () => {
+    const { service, order, addClaimTag, sendWelcomeOffer } = build({ appEmail: true });
+    expect((await claim(service, "App@Example.com")).status).toBe("claimed");
+
+    expect(order).toEqual(["customer", "discount", "email", "metafields"]);
+    expect(addClaimTag).not.toHaveBeenCalled(); // a Flow workflow left switched on must not send a second email
+    const row = await only();
+    expect(row).toMatchObject({ delivery: "APP", emailStatus: "EMAIL_SENT", failureStep: null, flowHandoffAt: null });
+    expect(row.emailSentAt).not.toBeNull();
+    expect(sendWelcomeOffer).toHaveBeenCalledWith({
+      claimId: row.id,
+      shopDomain: shop,
+      email: "app@example.com",
+      customerId: CUSTOMER_ID,
+      firstName: null,
+      discountCode: row.discountCode,
+      emailEligibility: "SUBSCRIBED",
+      template: defaultEmail,
+    });
+  });
+
+  it("hands the gateway the customer's consent state, so it can send a code-only message", async () => {
+    const { service, sendWelcomeOffer } = build({ appEmail: true, eligibility: "NOT_SUBSCRIBED" });
+    await claim(service, "optout@example.com");
+    expect(sendWelcomeOffer.mock.calls[0][0].emailEligibility).toBe("NOT_SUBSCRIBED");
+    expect((await only()).emailStatus).toBe("EMAIL_SENT");
+  });
+
+  it("sends the campaign's own template", async () => {
+    await db.campaign.update({ where: { id: campaignId }, data: { email: { ...defaultEmail, subject: "Custom {{shop_name}}" } } });
+    const { service, sendWelcomeOffer } = build({ appEmail: true });
+    await claim(service, "t@example.com");
+    expect(sendWelcomeOffer.mock.calls[0][0].template.subject).toBe("Custom {{shop_name}}");
+  });
+
+  it("a campaign saved before templates existed gets the default template", async () => {
+    const { service, sendWelcomeOffer } = build({ appEmail: true });
+    await claim(service, "old@example.com");
+    expect(sendWelcomeOffer.mock.calls[0][0].template).toEqual(defaultEmail);
+  });
+
+  it("a duplicate submission never sends a second email", async () => {
+    const { service, sendWelcomeOffer } = build({ appEmail: true });
+    await claim(service, "dup@example.com");
+    expect((await claim(service, " DUP@example.com")).status).toBe("already_claimed");
+    expect(sendWelcomeOffer).toHaveBeenCalledTimes(1);
+  });
+
+  it("15 simultaneous submissions send one email", async () => {
+    const { service, sendWelcomeOffer, issueCode } = build({ appEmail: true, sendEmail: () => new Promise((r) => setTimeout(r, 40)) });
+    const results = await Promise.all(Array.from({ length: 15 }, () => claim(service, "race@example.com")));
+    expect(results.filter((r) => r.status === "claimed")).toHaveLength(1);
+    expect(sendWelcomeOffer).toHaveBeenCalledTimes(1);
+    expect(issueCode).toHaveBeenCalledTimes(1);
+  });
+
+  it("a failed send keeps the code, marks the claim failed, and the retry reuses the same code and claim id", async () => {
+    let fail = true;
+    const { service, sendWelcomeOffer, issueCode } = build({
+      appEmail: true,
+      sendEmail: () => {
+        if (fail) throw new Error("Resend rejected the email (403)");
+      },
+    });
+    await expect(claim(service, "fail@example.com")).rejects.toThrow("Resend rejected");
+    const failed = await only();
+    expect(failed).toMatchObject({ emailStatus: "FAILED", failureStep: "email", emailSentAt: null });
+
+    fail = false;
+    expect((await claim(service, "fail@example.com")).status).toBe("claimed");
+    const ok = await only();
+    expect(ok.discountCode).toBe(failed.discountCode);
+    expect(ok).toMatchObject({ emailStatus: "EMAIL_SENT", failureStep: null });
+    // The same claim id gives the same Resend idempotency key, so a send that did land is never duplicated.
+    expect(sendWelcomeOffer.mock.calls.map(([i]) => i.claimId)).toEqual([failed.id, failed.id]);
+    expect(issueCode.mock.calls.map(([a]) => a.code)).toEqual([failed.discountCode, failed.discountCode]);
+    expect(await db.welcomeOfferClaim.count({ where: { shopDomain: shop } })).toBe(1);
+
+    expect((await claim(service, "fail@example.com")).status).toBe("already_claimed");
+    expect(sendWelcomeOffer).toHaveBeenCalledTimes(2);
+  });
+
+  it("a code that Shopify refuses stops before any email", async () => {
+    const { service, sendWelcomeOffer } = build({
+      appEmail: true,
+      issueCode: () => {
+        throw new Error("discounts down");
+      },
+    });
+    await expect(claim(service, "nodiscount@example.com")).rejects.toThrow();
+    expect(sendWelcomeOffer).not.toHaveBeenCalled();
+    expect((await only()).failureStep).toBe("discount");
+  });
+
+  it("the claim still succeeds when only the metafield mirror fails after the email went out", async () => {
+    const { service, sendWelcomeOffer } = build({
+      appEmail: true,
+      metafields: () => {
+        throw new Error("metafieldsSet failed");
+      },
+    });
+    expect((await claim(service, "mirror@example.com")).status).toBe("claimed");
+    expect(sendWelcomeOffer).toHaveBeenCalledTimes(1);
+    expect((await only()).emailStatus).toBe("EMAIL_SENT");
+  });
+
+  it("a claim created while Resend was missing is not emailed by the app later", async () => {
+    // Flow handled this customer. Turning on app sending afterwards must not email them again.
+    const flow = build();
+    await claim(flow.service, "handled@example.com");
+    expect((await only()).delivery).toBe("FLOW");
+
+    const app = build({ appEmail: true });
+    expect((await claim(app.service, "handled@example.com")).status).toBe("already_claimed");
+    expect(app.sendWelcomeOffer).not.toHaveBeenCalled();
+    expect(app.addClaimTag).not.toHaveBeenCalled();
+  });
+
+  it("a Flow claim that failed before the tag is finished through Flow, not by the app", async () => {
+    let fail = true;
+    const flow = build({ tag: () => { if (fail) throw new Error("tag down"); } });
+    await expect(claim(flow.service, "stuck@example.com")).rejects.toThrow();
+    fail = false;
+
+    const app = build({ appEmail: true });
+    expect((await claim(app.service, "stuck@example.com")).status).toBe("claimed");
+    expect(app.addClaimTag).toHaveBeenCalledTimes(1);
+    expect(app.sendWelcomeOffer).not.toHaveBeenCalled();
+    expect(await only()).toMatchObject({ delivery: "FLOW", emailStatus: "READY_FOR_FLOW" });
+  });
+
+  it("an app claim retried after Resend was removed fails clearly instead of adding a Flow tag", async () => {
+    let fail = true;
+    const app = build({ appEmail: true, sendEmail: () => { if (fail) throw new Error("down"); } });
+    await expect(claim(app.service, "gone@example.com")).rejects.toThrow();
+    fail = false;
+
+    const noEmail = build(); // Resend no longer configured
+    await expect(claim(noEmail.service, "gone@example.com")).rejects.toThrow(/not configured/);
+    expect(noEmail.addClaimTag).not.toHaveBeenCalled();
+    expect(await only()).toMatchObject({ delivery: "APP", emailStatus: "FAILED", failureStep: "email" });
+  });
+
+  it("first-purchase eligibility still refuses a returning customer before anything is sent", async () => {
+    await requireFirstPurchase();
+    const { service, sendWelcomeOffer, order } = build({ appEmail: true, existing: { id: CUSTOMER_ID, hasOrders: true } });
+    expect((await claim(service, "regular@example.com")).status).toBe("not_eligible");
+    expect(sendWelcomeOffer).not.toHaveBeenCalled();
+    expect(order).toEqual([]);
   });
 });
