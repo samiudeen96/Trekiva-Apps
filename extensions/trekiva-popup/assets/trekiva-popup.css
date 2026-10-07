@@ -1,4 +1,5 @@
 /* Sizes are in px, not rem: themes set the root font size anywhere from 10px to 20px. */
+html.tkv-lock,html.tkv-lock body{overflow:hidden}
 .tkv-overlay{position:fixed;inset:0;z-index:2147483000;display:flex;align-items:center;justify-content:center;padding:16px;background:rgba(0,0,0,var(--tkv-overlay,.55));-webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px);opacity:0;transition:opacity .25s ease;font-family:inherit}
 .tkv-overlay.tkv-visible{opacity:1}
 .tkv-overlay *,.tkv-overlay *::before,.tkv-overlay *::after{box-sizing:border-box}

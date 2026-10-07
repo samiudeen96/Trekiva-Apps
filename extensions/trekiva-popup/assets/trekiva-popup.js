@@ -170,6 +170,37 @@
     return { node: wrap, focus: function () { h.focus(); } };
   }
 
+  /* ---------- other apps' screens (COD checkouts, cart drawers, other popups) ---------- */
+  function visible(n) { return n.getClientRects().length > 0 && window.getComputedStyle(n).visibility !== "hidden"; }
+
+  // True while another app or the theme shows something modal. Opening on top of it would cover a
+  // checkout the customer is filling in and take their typing focus, so automatic opens wait.
+  function otherUiOpen() {
+    var modals = document.querySelectorAll('[aria-modal="true"], dialog[open]');
+    for (var i = 0; i < modals.length; i++) {
+      if (!modals[i].closest(".tkv-overlay") && visible(modals[i])) return true;
+    }
+    // Many checkout apps use a full-screen fixed layer (often an iframe) without aria-modal.
+    var n = document.elementFromPoint(window.innerWidth / 2, window.innerHeight / 2);
+    for (; n && n !== document.body && n !== document.documentElement; n = n.parentElement) {
+      if (n.classList && n.classList.contains("tkv-overlay")) return false;
+      var cs = window.getComputedStyle(n);
+      // A fixed layer stacked above the page; themes' fixed backgrounds sit at z-index auto/0 or below.
+      if (cs.position === "fixed" && Number(cs.zIndex) > 0) return true;
+    }
+    return false;
+  }
+
+  // Automatic opens only: waits until nothing else is on screen, re-checking every 1.5 s.
+  function openWhenClear() {
+    if (openState || opened) return;
+    if (!otherUiOpen()) return openPopup();
+    var timer = setInterval(function () {
+      if (openState || opened) return clearInterval(timer);
+      if (!otherUiOpen()) { clearInterval(timer); openPopup(); }
+    }, 1500);
+  }
+
   /* ---------- popup shell ---------- */
   function openPopup() {
     if (!campaign || openState) return;
@@ -248,8 +279,10 @@
       else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
     });
 
-    openState = { overlay: overlay, previousFocus: document.activeElement, scroll: document.body.style.overflow };
-    document.body.style.overflow = "hidden";
+    // Scroll is locked with our own class, never by editing body.style: COD and cart apps edit that
+    // too, and saving/restoring it across their open/close left the store unable to scroll.
+    openState = { overlay: overlay, previousFocus: document.activeElement };
+    document.documentElement.classList.add("tkv-lock");
     document.body.appendChild(overlay);
     requestAnimationFrame(function () { overlay.classList.add("tkv-visible"); });
     current.focus();
@@ -260,21 +293,26 @@
     if (!openState) return;
     var st = openState;
     openState = null;
-    document.body.style.overflow = st.scroll;
+    document.documentElement.classList.remove("tkv-lock");
     if (st.overlay.parentNode) st.overlay.parentNode.removeChild(st.overlay);
-    if (st.previousFocus && st.previousFocus.focus) st.previousFocus.focus();
+    var prev = st.previousFocus;
+    // Only hand focus back to something still on the page (not e.g. a checkout that has since closed).
+    if (prev && prev !== document.body && prev.focus && document.contains(prev)) {
+      try { prev.focus({ preventScroll: true }); } catch (e) { /* ignore */ }
+    }
   }
 
   /* ---------- triggers ---------- */
   function schedule(c) {
     var t = c.rules.trigger;
     if (t === "manual") return;
-    if (t === "load") return openPopup();
-    if (t === "delay") return void setTimeout(openPopup, Math.max(0, c.rules.delaySeconds) * 1000);
+    if (t === "load") return openWhenClear();
+    if (t === "delay") return void setTimeout(openWhenClear, Math.max(0, c.rules.delaySeconds) * 1000);
     if (t === "exit_intent") {
       if (isMobile()) return; // exit intent is desktop only
       var onOut = function (e) {
-        if (e.clientY <= 0 && !e.relatedTarget) {
+        // Leaving the window while a checkout is open is not exit intent; keep listening instead.
+        if (e.clientY <= 0 && !e.relatedTarget && !otherUiOpen()) {
           document.removeEventListener("mouseout", onOut);
           openPopup();
         }
