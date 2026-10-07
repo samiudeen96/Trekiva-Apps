@@ -6,7 +6,9 @@ import type { DiscountSummary } from "../discounts/types";
 import type { CampaignInput, CampaignContent } from "../campaigns/schema";
 import { parseCampaignForm, type FieldErrors } from "../campaigns/form";
 import { CampaignPreview } from "./CampaignPreview";
-import { EmailEditor } from "./EmailEditor";
+import { renderTemplatePreview } from "./TemplateEditor";
+import { defaultEmail } from "../email/defaults";
+import type { EmailTemplate } from "../email/schema";
 
 interface Props {
   initial: CampaignInput;
@@ -18,7 +20,8 @@ interface Props {
   emailEnabled?: boolean;
   /** Name shown where the email says {{shop_name}}. */
   shopName?: string;
-  testResult?: { ok: boolean; message: string } | null;
+  /** The shop's email templates, for step 8. */
+  templates?: { id: string; name: string; template: EmailTemplate }[];
 }
 
 const contentFields: [keyof CampaignContent, string, boolean][] = [
@@ -52,12 +55,12 @@ function readForm(form: HTMLFormElement): FormData {
   return fd;
 }
 
-export function CampaignForm({ initial, errors = {}, heading, discounts, emailEnabled = false, shopName = "Your store", testResult }: Props) {
+export function CampaignForm({ initial, errors = {}, heading, discounts, emailEnabled = false, shopName = "Your store", templates = [] }: Props) {
   const formRef = useRef<HTMLFormElement>(null);
   const submit = useSubmit();
   const [discountId, setDiscountId] = useState(initial.discountId ?? "");
   const [preview, setPreview] = useState<CampaignInput>(initial);
-  const [email, setEmail] = useState(initial.email);
+  const [templateId, setTemplateId] = useState(initial.emailTemplateId ?? "");
 
   const sync = useCallback(() => {
     if (!formRef.current) return;
@@ -325,8 +328,14 @@ export function CampaignForm({ initial, errors = {}, heading, discounts, emailEn
           )}
         </s-section>
         <s-section heading="8. Welcome email">
-          <EmailEditor value={email} onChange={setEmail} enabled={emailEnabled} shopName={shopName} testResult={testResult} />
-          {errors.email && <s-banner tone="critical">{errors.email}</s-banner>}
+          <TemplatePicker
+            templates={templates}
+            value={templateId}
+            onChange={setTemplateId}
+            shopName={shopName}
+            emailEnabled={emailEnabled}
+            error={errors.emailTemplateId}
+          />
         </s-section>
 
         <s-section heading="9. Preview">
@@ -337,5 +346,53 @@ export function CampaignForm({ initial, errors = {}, heading, discounts, emailEn
         </s-section>
       </s-page>
     </form>
+  );
+}
+
+/** Step 8: which shop template this campaign sends, with a live preview of it. */
+function TemplatePicker(p: {
+  templates: { id: string; name: string; template: EmailTemplate }[];
+  value: string;
+  onChange: (id: string) => void;
+  shopName: string;
+  emailEnabled: boolean;
+  error?: string;
+}) {
+  const chosen = p.templates.find((t) => t.id === p.value);
+  const html = renderTemplatePreview(chosen?.template ?? defaultEmail, p.shopName).html;
+  return (
+    <s-stack gap="base">
+      {!p.emailEnabled && (
+        <s-banner tone="info">
+          The app is not sending email yet (see Settings), so Shopify Flow sends it. The template you pick here is used
+          as soon as sending from the app is set up.
+        </s-banner>
+      )}
+      {/* A plain select so its value travels with the form like the other fields. */}
+      <label style={{ display: "block" }}>
+        <span style={{ display: "block", fontSize: 13, fontWeight: 600, marginBottom: 4 }}>Email template</span>
+        <select
+          name="emailTemplateId"
+          value={p.value}
+          onChange={(e) => p.onChange(e.target.value)}
+          style={{ width: "100%", maxWidth: 420, padding: "8px 10px", fontSize: 14, fontFamily: "inherit", border: "1px solid #8a8a8a", borderRadius: 6, background: "#fff", color: "inherit" }}
+        >
+          <option value="">Built-in default</option>
+          {p.templates.map((t) => (
+            <option key={t.id} value={t.id}>{t.name}</option>
+          ))}
+        </select>
+      </label>
+      {p.error && <s-text tone="critical">{p.error}</s-text>}
+      <s-stack direction="inline" gap="base">
+        {chosen ? <s-link href={`/app/templates/${chosen.id}`}>Edit this template</s-link> : null}
+        <s-link href="/app/templates/new">Create a template</s-link>
+        <s-link href="/app/templates">Manage templates</s-link>
+      </s-stack>
+      <div style={{ background: "#e3e3e3", borderRadius: 8, padding: 12 }}>
+        <iframe title="Welcome email preview" sandbox="" srcDoc={html} style={{ width: "100%", height: 520, border: 0, borderRadius: 6, background: "#fff" }} />
+      </div>
+      <s-text color="subdued">Preview with a sample code. Template edits apply to every email sent after you save the template.</s-text>
+    </s-stack>
   );
 }

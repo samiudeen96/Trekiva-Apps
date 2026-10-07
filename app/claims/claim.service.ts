@@ -117,6 +117,8 @@ export class ClaimService {
 
     const campaign = await db.campaign.findFirst({
       where: { id: campaignId, shopDomain, status: "ACTIVE" },
+      // The email it sends. Read at send time, so template edits apply to every later claim.
+      include: { emailTemplate: { select: { template: true } } },
     });
     if (!campaign?.discountCode || !campaign.discountId) throw new CampaignUnavailableError();
     const discountId = campaign.discountId;
@@ -224,7 +226,7 @@ export class ClaimService {
           firstName: customer.firstName ?? null,
           discountCode: code,
           emailEligibility: customer.emailEligibility,
-          template: resolveEmailTemplate(campaign.email),
+          template: resolveEmailTemplate(campaign.emailTemplate?.template),
         });
         await db.welcomeOfferClaim.update({
           where: { id: claimId },

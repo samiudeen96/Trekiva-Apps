@@ -1,4 +1,3 @@
-import { emailTemplateSchema } from "../email/schema";
 import {
   contentSchema,
   designSchema,
@@ -61,18 +60,10 @@ export function parseCampaignForm(fd: FormData): ParseResult {
   if (rules.data.pages === "specific" && rules.data.specificUrls.length === 0) {
     return { ok: false, errors: { "rules.specificUrls": "Add at least one URL" } };
   }
-  // The email editor keeps its template as one JSON document (a block editor does not map to flat fields).
-  let emailRaw: unknown = undefined;
-  try {
-    const json = str(fd, "email");
-    emailRaw = json ? JSON.parse(json) : undefined;
-  } catch {
-    return { ok: false, errors: { email: "The email template could not be read. Reload and try again." } };
-  }
-  const email = emailTemplateSchema.safeParse(emailRaw);
-  if (!email.success) {
-    const i = email.error.issues[0];
-    return { ok: false, errors: { email: `Email: ${i.path.length ? i.path.join(" > ") + ": " : ""}${i.message}` } };
+  // Ownership is checked by the service; here it only has to look like an id.
+  const templateRaw = str(fd, "emailTemplateId").trim();
+  if (templateRaw && !/^[A-Za-z0-9_-]{1,64}$/.test(templateRaw)) {
+    return { ok: false, errors: { emailTemplateId: "Select a valid email template" } };
   }
   const discountId = discountIdSchema.safeParse(str(fd, "discountId") || null);
   if (!discountId.success) {
@@ -86,7 +77,7 @@ export function parseCampaignForm(fd: FormData): ParseResult {
       content: content.data,
       design: design.data,
       rules: rules.data,
-      email: email.data,
+      emailTemplateId: templateRaw || null,
     },
   };
 }

@@ -148,7 +148,34 @@ export interface RenderedEmail {
   text: string;
 }
 
-export function renderEmail(input: { template: EmailTemplate; vars: EmailVars; mode?: EmailMode }): RenderedEmail {
+/**
+ * Editor-only: tag each section so a click in the canvas selects it, and outline the selected one.
+ * Never passed when an email is sent (sent emails contain no script).
+ */
+export interface PreviewOptions {
+  selectedId: string | null;
+  /** Restores the canvas scroll position after the preview is rebuilt. */
+  scrollY?: number;
+}
+
+const PREVIEW_STYLE = `tr[data-section]{cursor:pointer}tr[data-section]>td{transition:box-shadow .1s}tr[data-section]:hover>td{box-shadow:inset 0 0 0 2px #9bbcf0}tr[data-selected]>td,tr[data-selected]:hover>td{box-shadow:inset 0 0 0 2px #2c6ecb}`;
+
+function previewScript(scrollY: number): string {
+  // Clicks select a section instead of following links; the parent page owns the selection.
+  return `<script>(function(){window.scrollTo(0,${Math.max(0, Math.floor(scrollY))});document.addEventListener("click",function(e){e.preventDefault();var t=e.target.closest&&e.target.closest("[data-section]");parent.postMessage({trekivaSection:t?t.getAttribute("data-section"):null},"*")},true);var q;window.addEventListener("scroll",function(){clearTimeout(q);q=setTimeout(function(){parent.postMessage({trekivaScroll:window.scrollY},"*")},80)})})();</script>`;
+}
+
+function placeholder(s: EmailSection): string {
+  const what = s.type === "image" ? "Image: add an image URL" : s.type === "button" ? "Button: add a valid link" : "Empty section";
+  return `<tr><td style="padding:28px 16px;text-align:center;font-size:14px;color:#8a8a8a;border:1px dashed #c9c9c9;">${what}</td></tr>`;
+}
+
+export function renderEmail(input: {
+  template: EmailTemplate;
+  vars: EmailVars;
+  mode?: EmailMode;
+  preview?: PreviewOptions;
+}): RenderedEmail {
   const { vars: v } = input;
   const mode = input.mode ?? "full";
   const t = input.template;
@@ -160,14 +187,22 @@ export function renderEmail(input: { template: EmailTemplate; vars: EmailVars; m
   const subject = fillPlain(t.subject, v).replace(/\s+/g, " ").trim();
   const previewText = mode === "codeOnly" ? "Your welcome discount code" : fillPlain(t.previewText, v).replace(/\s+/g, " ").trim();
   const font = FONTS[t.brand.fontFamily];
-  const rows = sections.map((s) => renderSection(s, t, v)).join("\n");
+  const preview = input.preview;
+  const rows = sections
+    .map((s) => {
+      const html = renderSection(s, t, v);
+      if (!preview) return html;
+      const attrs = ` data-section="${esc(s.id)}"${s.id === preview.selectedId ? " data-selected" : ""}`;
+      return (html || placeholder(s)).replace(/^<tr/, `<tr${attrs}`);
+    })
+    .join("\n");
 
   const html = `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light">
 <title>${esc(subject)}</title>
-<style>@media only screen and (max-width:620px){.stack{display:block!important;width:100%!important;box-sizing:border-box;padding:8px 0!important}.px{padding-left:20px!important;padding-right:20px!important}}</style>
+${preview ? `<style>${PREVIEW_STYLE}</style>` : ""}<style>@media only screen and (max-width:620px){.stack{display:block!important;width:100%!important;box-sizing:border-box;padding:8px 0!important}.px{padding-left:20px!important;padding-right:20px!important}}</style>
 </head>
 <body style="margin:0;padding:0;background:${t.brand.backgroundColor};font-family:${font};">
 <span style="display:none;max-height:0;overflow:hidden;opacity:0;mso-hide:all;">${esc(previewText)}</span>
@@ -177,7 +212,7 @@ ${rows}
 ${footer(t, v)}
 </table>
 </td></tr></table>
-</body>
+${preview ? previewScript(preview.scrollY ?? 0) : ""}</body>
 </html>`;
 
   return { subject, previewText, html, text: renderText(sections, t, v) };

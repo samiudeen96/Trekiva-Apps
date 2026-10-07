@@ -19,6 +19,7 @@ describe("toPublicCampaign", () => {
       design: d.design,
       rules: d.rules,
       email: {},
+      emailTemplateId: null,
       createdAt: new Date(),
       updatedAt: new Date(),
     } as Campaign;

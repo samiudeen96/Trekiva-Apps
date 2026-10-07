@@ -169,3 +169,48 @@ describe("resolveEmailTemplate", () => {
     expect(resolveEmailTemplate({ subject: "x", sections: "nope" })).toEqual(defaultEmail);
   });
 });
+
+describe("renderEmail: editor preview mode", () => {
+  const t = tpl({ sections: [...defaultEmail.sections, newSection("image")] });
+
+  it("tags every section so a click selects it, and marks the selected one", () => {
+    const { html } = renderEmail({ template: t, vars, preview: { selectedId: "intro" } });
+    for (const s of t.sections) expect(html).toContain(`data-section="${s.id}"`);
+    expect(html).toMatch(/<tr data-section="intro" data-selected/);
+    expect(html.match(/<tr[^>]*data-selected/g)).toHaveLength(1);
+  });
+
+  it("shows a clickable placeholder for a section that would render nothing yet", () => {
+    const { html } = renderEmail({ template: t, vars, preview: { selectedId: null } });
+    expect(html).toContain("Image: add an image URL");
+  });
+
+  it("restores the scroll position and posts clicks to the editor", () => {
+    const { html } = renderEmail({ template: t, vars, preview: { selectedId: null, scrollY: 340 } });
+    expect(html).toContain("window.scrollTo(0,340)");
+    expect(html).toContain("trekivaSection");
+  });
+
+  it("never puts editor markup or script into a real email", () => {
+    const { html } = renderEmail({ template: t, vars });
+    expect(html).not.toMatch(/<script|data-section|data-selected|Image: add an image URL/);
+  });
+
+  it("escapes a hostile section id even in the preview", () => {
+    const evil = tpl({ sections: [{ ...defaultEmail.sections[2], id: 'x"><script>alert(1)</script>' } as EmailTemplate["sections"][number]] });
+    const { html } = renderEmail({ template: evil, vars, preview: { selectedId: null } });
+    expect(html).not.toContain("<script>alert(1)");
+  });
+});
+
+describe("starter templates", () => {
+  it("are all valid and each shows the customer's code", async () => {
+    const { STARTERS } = await import("./defaults");
+    expect(STARTERS.length).toBeGreaterThanOrEqual(3);
+    for (const s of STARTERS) {
+      expect(emailTemplateSchema.safeParse(s.template).success).toBe(true);
+      expect(renderEmail({ template: s.template, vars }).html).toContain(vars.code);
+    }
+    expect(new Set(STARTERS.map((s) => s.key)).size).toBe(STARTERS.length);
+  });
+});

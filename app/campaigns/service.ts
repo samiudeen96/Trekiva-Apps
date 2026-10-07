@@ -3,7 +3,7 @@ import { getCodeDiscount } from "../discounts/discounts.server";
 import type { AdminGraphqlClient } from "../discounts/types";
 import { campaignRepository, type DiscountRef } from "../repositories/campaign.repository";
 import { defaultCampaign } from "./defaults";
-import { resolveEmailTemplate } from "../email/defaults";
+import { emailTemplateRepository } from "../repositories/email-template.repository";
 import type { CampaignInput } from "./schema";
 
 export { parseCampaignForm } from "./form";
@@ -18,7 +18,7 @@ export function campaignToInput(c: Campaign): CampaignInput {
     content: { ...defaultCampaign.content, ...(c.content as object) },
     design: { ...defaultCampaign.design, ...(c.design as object) },
     rules: { ...defaultCampaign.rules, ...(c.rules as object) },
-    email: resolveEmailTemplate(c.email),
+    emailTemplateId: c.emailTemplateId,
   };
 }
 
@@ -43,6 +43,14 @@ async function resolveDiscount(
   return { ok: true, discount: { id: found.id, code: found.code, title: found.title } };
 }
 
+/** The browser only sends an id: it must be one of this shop's templates. */
+async function checkTemplate(shopDomain: string, input: CampaignInput): Promise<FieldErrors | null> {
+  if (!input.emailTemplateId) return null;
+  return (await emailTemplateRepository.exists(shopDomain, input.emailTemplateId))
+    ? null
+    : { emailTemplateId: "That email template no longer exists. Pick another." };
+}
+
 export type SaveResult<T> = { ok: true; value: T } | { ok: false; errors: FieldErrors };
 
 export const campaignService = {
@@ -51,6 +59,8 @@ export const campaignService = {
   remove: campaignRepository.remove,
 
   async create(shopDomain: string, admin: AdminGraphqlClient, input: CampaignInput): Promise<SaveResult<Campaign>> {
+    const bad = await checkTemplate(shopDomain, input);
+    if (bad) return { ok: false, errors: bad };
     const r = await resolveDiscount(admin, input);
     if (!r.ok) return r;
     return { ok: true, value: await campaignRepository.create(shopDomain, input, r.discount) };
@@ -58,6 +68,8 @@ export const campaignService = {
 
   /** value is false when the campaign does not belong to this shop. */
   async update(shopDomain: string, admin: AdminGraphqlClient, id: string, input: CampaignInput): Promise<SaveResult<boolean>> {
+    const bad = await checkTemplate(shopDomain, input);
+    if (bad) return { ok: false, errors: bad };
     const r = await resolveDiscount(admin, input);
     if (!r.ok) return r;
     return { ok: true, value: await campaignRepository.update(shopDomain, id, input, r.discount) };

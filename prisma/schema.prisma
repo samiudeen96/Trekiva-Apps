@@ -94,8 +94,11 @@ model Campaign {
   content       Json
   design        Json
   rules         Json
-  // Email template (sections + brand), validated with zod in app/email. {} = the default template.
+  // Legacy inline email template (before shop-level templates). Read only by the migration that moved it.
   email         Json           @default("{}")
+  // The welcome email this campaign sends. Null = the built-in default template.
+  emailTemplateId String?      @map("email_template_id")
+  emailTemplate EmailTemplate? @relation(fields: [emailTemplateId], references: [id], onDelete: Restrict)
 
   createdAt     DateTime       @default(now()) @map("created_at")
   updatedAt     DateTime       @updatedAt @map("updated_at")
@@ -104,6 +107,22 @@ model Campaign {
 
   @@index([shopDomain, status])
   @@map("campaigns")
+}
+
+/** A reusable welcome email, edited under "Email templates" and picked by campaigns. */
+model EmailTemplate {
+  id         String     @id @default(cuid())
+  shopDomain String     @map("shop_domain")
+  name       String
+  // Subject, preview text, brand and sections. Validated with zod in app/email/schema.ts.
+  template   Json
+  createdAt  DateTime   @default(now()) @map("created_at")
+  updatedAt  DateTime   @updatedAt @map("updated_at")
+
+  campaigns  Campaign[]
+
+  @@index([shopDomain])
+  @@map("email_templates")
 }
 
 model WelcomeOfferClaim {

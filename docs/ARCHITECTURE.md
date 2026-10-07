@@ -120,7 +120,13 @@ empty), so the app can send the welcome email itself. It is **optional and off u
   by `email_sent_at`, not by the tag. A failed send leaves the claim `FAILED` (`failure_step = email`); a retry reuses
   the stored code and the same claim id, which is also the Resend `Idempotency-Key` (`welcome-offer-<claimId>`), so a
   send that did land is never duplicated.
-- **Template.** Each campaign stores `campaigns.email` (JSON, validated by `app/email/schema.ts`): subject, preview text,
+- **Templates are shop-level** (`email_templates`, menu "Email templates"): created from a starter (Welcome, Minimal,
+  Showcase), edited in a Messaging-style editor (settings panel + live canvas; clicking a section in the canvas selects
+  it), and picked per campaign (`campaigns.email_template_id`; null = the built-in default). The template is read at
+  send time, so saved edits apply to every later claim. A template a campaign uses cannot be deleted (checked in a
+  transaction and enforced by the foreign key). `campaigns.email` is the legacy inline template; the migration turned
+  each non-empty one into a template the campaign points at.
+- **Template content** (validated by `app/email/schema.ts`): subject, preview text,
   brand (colors, font, width) and an ordered list of sections: header, text, image, image with text, discount, button,
   columns; plus a fixed footer. `app/email/render.ts` turns it into email-safe HTML (tables, inline styles, a mobile
   stacking rule) and a plain-text part. All merchant text is escaped; only `https` links and `{{discount_link}}` /

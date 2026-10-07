@@ -28,6 +28,7 @@ export default function App() {
         <s-link href="/app">Dashboard</s-link>
         <s-link href="/app/campaigns">Campaigns</s-link>
         <s-link href="/app/claims">Claims</s-link>
+        <s-link href="/app/templates">Email templates</s-link>
         <s-link href="/app/settings">Settings</s-link>
       </s-app-nav>
       <Outlet />

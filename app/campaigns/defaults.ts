@@ -1,5 +1,4 @@
 import type { CampaignInput } from "./schema";
-import { defaultEmail } from "../email/defaults";
 
 export const defaultCampaign: CampaignInput = {
   discountId: null,
@@ -41,5 +40,5 @@ export const defaultCampaign: CampaignInput = {
     frequencyDays: 7,
     firstPurchaseOnly: false,
   },
-  email: defaultEmail,
+  emailTemplateId: null,
 };

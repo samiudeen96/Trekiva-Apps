@@ -98,6 +98,7 @@ beforeEach(async () => {
   forced.codes = [];
   await db.welcomeOfferClaim.deleteMany({ where: { shopDomain: shop } });
   await db.campaign.deleteMany({ where: { shopDomain: shop } });
+  await db.emailTemplate.deleteMany({ where: { shopDomain: shop } });
   const c = await db.campaign.create({
     data: {
       shopDomain: shop,
@@ -116,6 +117,7 @@ beforeEach(async () => {
 afterAll(async () => {
   await db.welcomeOfferClaim.deleteMany({ where: { shopDomain: shop } });
   await db.campaign.deleteMany({ where: { shopDomain: shop } });
+  await db.emailTemplate.deleteMany({ where: { shopDomain: shop } });
   await db.$disconnect();
 });
 
@@ -569,11 +571,18 @@ describe("ClaimService: email sent by the app", () => {
     expect((await only()).emailStatus).toBe("EMAIL_SENT");
   });
 
-  it("sends the campaign's own template", async () => {
-    await db.campaign.update({ where: { id: campaignId }, data: { email: { ...defaultEmail, subject: "Custom {{shop_name}}" } } });
+  it("sends the template the campaign picked, including edits saved after it was picked", async () => {
+    const tpl = await db.emailTemplate.create({
+      data: { shopDomain: shop, name: "Custom", template: { ...defaultEmail, subject: "Custom {{shop_name}}" } },
+    });
+    await db.campaign.update({ where: { id: campaignId }, data: { emailTemplateId: tpl.id } });
     const { service, sendWelcomeOffer } = build({ appEmail: true });
     await claim(service, "t@example.com");
     expect(sendWelcomeOffer.mock.calls[0][0].template.subject).toBe("Custom {{shop_name}}");
+
+    await db.emailTemplate.update({ where: { id: tpl.id }, data: { template: { ...defaultEmail, subject: "Edited" } } });
+    await claim(service, "t2@example.com");
+    expect(sendWelcomeOffer.mock.calls[1][0].template.subject).toBe("Edited");
   });
 
   it("a campaign saved before templates existed gets the default template", async () => {

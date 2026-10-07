@@ -6,6 +6,8 @@ import { defaultCampaign } from "../campaigns/defaults";
 import { listCodeDiscounts } from "../discounts/discounts.server";
 import { campaignService, parseCampaignForm } from "../campaigns/service";
 import { emailConfig, senderName } from "../email/email.server";
+import { emailTemplateRepository } from "../repositories/email-template.repository";
+import { resolveEmailTemplate } from "../email/defaults";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
@@ -14,6 +16,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     discounts: await listCodeDiscounts(admin).catch(() => null),
     emailEnabled: Boolean(mail),
     shopName: (mail && senderName(mail.from)) || session.shop,
+    templates: (await emailTemplateRepository.list(session.shop)).map((t) => ({
+      id: t.id,
+      name: t.name,
+      template: resolveEmailTemplate(t.template),
+    })),
   };
 };
 
@@ -29,7 +36,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
 export default function NewCampaign() {
   const data = useActionData<typeof action>();
-  const { discounts, emailEnabled, shopName } = useLoaderData<typeof loader>();
+  const { discounts, emailEnabled, shopName, templates } = useLoaderData<typeof loader>();
   return (
     <CampaignForm
       heading="Create campaign"
@@ -38,6 +45,7 @@ export default function NewCampaign() {
       discounts={discounts}
       emailEnabled={emailEnabled}
       shopName={shopName}
+      templates={templates}
     />
   );
 }

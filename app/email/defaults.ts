@@ -96,3 +96,64 @@ export const SECTION_LABELS: Record<EmailSectionType, string> = {
   button: "Button",
   columns: "Columns",
 };
+
+export interface Starter {
+  key: string;
+  name: string;
+  description: string;
+  template: EmailTemplate;
+}
+
+/** Starting points for "Create template". Each is a complete, valid template. */
+export const STARTERS: Starter[] = [
+  {
+    key: "welcome",
+    name: "Welcome",
+    description: "Logo, a short greeting and the customer's code.",
+    template: defaultEmail,
+  },
+  {
+    key: "minimal",
+    name: "Minimal",
+    description: "Just the logo and the code. Quick to read on a phone.",
+    template: {
+      ...defaultEmail,
+      sections: [
+        defaultEmail.sections[0],
+        {
+          type: "discount",
+          id: "discount",
+          heading: "Your welcome code",
+          description: "Use this code at checkout.",
+          note: "",
+          buttonLabel: "Shop now",
+          redirectPath: "",
+        },
+      ],
+    },
+  },
+  {
+    key: "showcase",
+    name: "Showcase",
+    description: "A banner, the code, then your store's benefits in columns.",
+    template: {
+      ...defaultEmail,
+      sections: [
+        defaultEmail.sections[0],
+        { type: "image", id: "banner", imageUrl: "", alt: "Welcome offer", linkUrl: "{{discount_link}}" },
+        defaultEmail.sections[1],
+        defaultEmail.sections[2],
+        {
+          type: "columns",
+          id: "benefits",
+          items: [
+            { title: "Free shipping", text: "On orders over a set amount." },
+            { title: "Easy returns", text: "Not the right fit? Send it back." },
+            { title: "Made to last", text: "Comfort you can wear every day." },
+          ],
+        },
+        { type: "button", id: "shop", label: "Shop the collection", url: "{{discount_link}}", align: "center" },
+      ],
+    },
+  },
+];

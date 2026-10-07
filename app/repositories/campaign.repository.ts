@@ -18,7 +18,7 @@ const toData = (input: CampaignInput, discount: DiscountRef | null) => ({
   content: input.content as Prisma.InputJsonValue,
   design: input.design as Prisma.InputJsonValue,
   rules: input.rules as Prisma.InputJsonValue,
-  email: input.email as Prisma.InputJsonValue,
+  emailTemplateId: input.emailTemplateId,
 });
 
 export type RemoveCampaignResult =
