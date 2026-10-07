@@ -214,3 +214,35 @@ describe("starter templates", () => {
     expect(new Set(STARTERS.map((s) => s.key)).size).toBe(STARTERS.length);
   });
 });
+
+describe("hiding the code", () => {
+  const hidden = (patch: object = {}) =>
+    tpl({ sections: [defaultEmail.sections[1], { ...defaultEmail.sections[2], showCode: false, ...patch } as EmailTemplate["sections"][number]] });
+
+  it("leaves the code out of the email but keeps the button that applies it", () => {
+    const r = renderEmail({ template: hidden(), vars });
+    expect(r.html).not.toContain(">WELCOME10-7KQ2M9XH<");
+    expect(r.html).toContain(`href="${vars.discountBase}"`);
+    expect(r.text).not.toMatch(/^\s+WELCOME10-7KQ2M9XH$/m);
+    expect(r.text).toContain(vars.discountBase);
+  });
+
+  it("shows the code by default, including for stored templates that predate the option", () => {
+    const old = JSON.parse(JSON.stringify(defaultEmail));
+    delete old.sections[2].showCode;
+    const parsed = emailTemplateSchema.parse(old);
+    expect(parsed.sections[2]).toMatchObject({ type: "discount", showCode: true });
+    expect(renderEmail({ template: parsed, vars }).html).toContain(">WELCOME10-7KQ2M9XH<");
+  });
+
+  it("will not save a hidden code without a button, since nothing could use it", () => {
+    expect(emailTemplateSchema.safeParse(hidden({ buttonLabel: "" })).success).toBe(false);
+    expect(emailTemplateSchema.safeParse(hidden({ buttonLabel: "  " })).success).toBe(false);
+    expect(emailTemplateSchema.safeParse(hidden()).success).toBe(true);
+  });
+
+  it("always shows the code to someone who is not subscribed", () => {
+    const r = renderEmail({ template: hidden(), vars: { ...vars, unsubscribeUrl: null }, mode: "codeOnly" });
+    expect(r.html).toContain(">WELCOME10-7KQ2M9XH<");
+  });
+});

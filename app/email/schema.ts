@@ -61,6 +61,8 @@ const imageText = z.object({
 const discount = z.object({
   type: z.literal("discount"),
   id: sectionId,
+  /** false hides the code box; the button still applies the code through the discount link. */
+  showCode: z.boolean().default(true),
   heading: text(120),
   description: text(400),
   note: text(300),
@@ -106,7 +108,12 @@ export const emailTemplateSchema = z.object({
     .min(1)
     .max(20)
     // A welcome email without the customer's code would be useless, so one is always required.
-    .refine((s) => s.some((x) => x.type === "discount"), "Keep at least one discount section: it shows the code"),
+    .refine((s) => s.some((x) => x.type === "discount"), "Keep at least one discount section: it carries the code")
+    // A hidden code is only reachable through the button, so a section that hides it must keep one.
+    .refine(
+      (s) => s.every((x) => x.type !== "discount" || x.showCode || x.buttonLabel.trim() !== ""),
+      "A discount section that hides the code needs a button label, or the customer cannot use the code",
+    ),
   /** The footer is fixed and always last; the unsubscribe link in it cannot be removed. */
   footer: z.object({ address: text(300) }),
 });

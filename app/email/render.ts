@@ -1,5 +1,6 @@
 import type { EmailSection, EmailTemplate } from "./schema";
 import { defaultEmail } from "./defaults";
+import { renderRich, stripRich } from "./richtext";
 
 // Pure (no server imports): used by the sender, the test-email action and the editor's preview.
 
@@ -38,13 +39,16 @@ function fill(s: string, v: EmailVars): string {
   return esc(s).replace(PLACEHOLDER, (_, k: string) => esc(vals[k.toLowerCase()]));
 }
 
+/** Rich text (bold, italic, links, lists): formatted first, with customer values filled in last. */
 const paragraphs = (s: string, v: EmailVars, style: string) =>
-  s
-    .split(/\n\s*\n/)
-    .map((p) => p.trim())
-    .filter(Boolean)
-    .map((p) => `<p style="${style}">${fill(p, v).replace(/\n/g, "<br>")}</p>`)
-    .join("");
+  renderRich(
+    s,
+    {
+      link: (p) => (p === "{{discount_link}}" ? v.discountBase : v.shopUrl),
+      fill: (html) => html.replace(PLACEHOLDER, (_, k: string) => esc(values(v)[k.toLowerCase()])),
+    },
+    style,
+  );
 
 /** Only https URLs or the two link placeholders ever reach an href. */
 function resolveUrl(raw: string, v: EmailVars, discountLink: string): string | null {
@@ -108,9 +112,9 @@ function renderSection(s: EmailSection, t: EmailTemplate, v: EmailVars): string 
       return row(
         `${s.heading ? `<h2 style="margin:0 0 10px;font-size:22px;line-height:1.3;color:${c};text-align:center;">${fill(s.heading, v)}</h2>` : ""}${
           s.description ? paragraphs(s.description, v, `${body}text-align:center;`) : ""
-        }<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:8px 0 14px;"><tr><td align="center" bgcolor="${t.brand.buttonColor}" style="padding:20px;background:${t.brand.buttonColor};border-radius:8px;font-family:'SFMono-Regular',Menlo,Consolas,'Courier New',monospace;font-size:24px;font-weight:700;letter-spacing:2px;color:${t.brand.buttonTextColor};">${esc(v.code)}</td></tr></table>${
+        }${s.showCode ? `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:8px 0 14px;"><tr><td align="center" bgcolor="${t.brand.buttonColor}" style="padding:20px;background:${t.brand.buttonColor};border-radius:8px;font-family:'SFMono-Regular',Menlo,Consolas,'Courier New',monospace;font-size:24px;font-weight:700;letter-spacing:2px;color:${t.brand.buttonTextColor};">${esc(v.code)}</td></tr></table>` : ""}${
           s.buttonLabel ? button(s.buttonLabel, link, t, "center") : ""
-        }${s.note ? `<p style="margin:14px 0 0;font-size:13px;line-height:1.5;color:${c};opacity:.7;text-align:center;">${fill(s.note, v)}</p>` : ""}`,
+        }${s.note ? paragraphs(s.note, v, `margin:14px 0 0;font-size:13px;line-height:1.5;color:${c};opacity:.7;text-align:center;`) : ""}`,
         "16px 32px",
       );
     }
@@ -180,7 +184,13 @@ export function renderEmail(input: {
   const mode = input.mode ?? "full";
   const t = input.template;
 
-  let sections: EmailSection[] = mode === "codeOnly" ? t.sections.filter((s) => s.type === "header" || s.type === "discount") : t.sections;
+  // The code-only message exists to deliver the code, so it always shows it, whatever the template hides.
+  let sections: EmailSection[] =
+    mode === "codeOnly"
+      ? t.sections
+          .filter((s) => s.type === "header" || s.type === "discount")
+          .map((s) => (s.type === "discount" ? { ...s, showCode: true } : s))
+      : t.sections;
   // The code must always be in the email, even for a template stored without a discount section.
   if (!sections.some((s) => s.type === "discount")) sections = [...sections, defaultEmail.sections[2]];
 
@@ -218,6 +228,8 @@ ${preview ? previewScript(preview.scrollY ?? 0) : ""}</body>
   return { subject, previewText, html, text: renderText(sections, t, v) };
 }
 
+const plainRich = (src: string, v: EmailVars) => stripRich(src, (p) => (p === "{{discount_link}}" ? v.discountBase : v.shopUrl));
+
 function renderText(sections: EmailSection[], t: EmailTemplate, v: EmailVars): string {
   const parts: string[] = [];
   for (const s of sections) {
@@ -226,14 +238,14 @@ function renderText(sections: EmailSection[], t: EmailTemplate, v: EmailVars): s
         parts.push(v.shopName);
         break;
       case "text":
-        parts.push([s.heading && fillPlain(s.heading, v), fillPlain(s.body, v)].filter(Boolean).join("\n\n"));
+        parts.push([s.heading && fillPlain(s.heading, v), fillPlain(plainRich(s.body, v), v)].filter(Boolean).join("\n\n"));
         break;
       case "imageText":
-        parts.push([s.heading && fillPlain(s.heading, v), fillPlain(s.body, v)].filter(Boolean).join("\n\n"));
+        parts.push([s.heading && fillPlain(s.heading, v), fillPlain(plainRich(s.body, v), v)].filter(Boolean).join("\n\n"));
         break;
       case "discount":
         parts.push(
-          [s.heading && fillPlain(s.heading, v), s.description && fillPlain(s.description, v), `  ${v.code}`, s.buttonLabel && `${s.buttonLabel}: ${discountLinkFor(v, s.redirectPath)}`, s.note && fillPlain(s.note, v)]
+          [s.heading && fillPlain(s.heading, v), s.description && fillPlain(plainRich(s.description, v), v), s.showCode && `  ${v.code}`, s.buttonLabel && `${s.buttonLabel}: ${discountLinkFor(v, s.redirectPath)}`, s.note && fillPlain(plainRich(s.note, v), v)]
             .filter(Boolean)
             .join("\n\n"),
         );

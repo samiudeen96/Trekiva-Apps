@@ -36,8 +36,91 @@ const urlProblem = (v: string, allowPlaceholders: boolean) =>
     ? null
     : allowPlaceholders ? "Use an https URL, {{discount_link}} or {{shop_url}}" : "Use an https URL";
 
-function Text(props: { label: string; value: string; max: number; onChange: (v: string) => void; hint?: string; url?: "plain" | "link"; area?: boolean }) {
+/** Wraps the selection (or inserts a placeholder word) and puts the cursor back where the reader expects it. */
+function RichToolbar(props: { area: React.RefObject<HTMLTextAreaElement | null>; value: string; max: number; onChange: (v: string) => void }) {
+  const [linking, setLinking] = useState(false);
+  const [url, setUrl] = useState("https://");
+  const edit = (fn: (before: string, sel: string, after: string) => { text: string; from: number; to: number }) => {
+    const el = props.area.current;
+    if (!el) return;
+    const a = el.selectionStart;
+    const b = el.selectionEnd;
+    const r = fn(props.value.slice(0, a), props.value.slice(a, b), props.value.slice(b));
+    if (r.text.length > props.max) return;
+    props.onChange(r.text);
+    requestAnimationFrame(() => {
+      el.focus();
+      el.setSelectionRange(r.from, r.to);
+    });
+  };
+  const wrap = (mark: string, fallback: string) =>
+    edit((before, sel, after) => {
+      const inner = sel || fallback;
+      return { text: `${before}${mark}${inner}${mark}${after}`, from: before.length + mark.length, to: before.length + mark.length + inner.length };
+    });
+  const list = () =>
+    edit((before, sel, after) => {
+      const body = (sel || "List item").split("\n").map((l) => (/^[-•]\s/.test(l) ? l : `- ${l}`)).join("\n");
+      const lead = before === "" || before.endsWith("\n\n") ? "" : before.endsWith("\n") ? "\n" : "\n\n";
+      return { text: `${before}${lead}${body}${after}`, from: before.length + lead.length, to: before.length + lead.length + body.length };
+    });
+  const link = () => {
+    const ok = /^https:\/\/\S+$/.test(url) || url === "{{discount_link}}" || url === "{{shop_url}}";
+    if (!ok) return;
+    edit((before, sel, after) => {
+      const label = sel || "link text";
+      const md = `[${label}](${url})`;
+      return { text: `${before}${md}${after}`, from: before.length + 1, to: before.length + 1 + label.length };
+    });
+    setLinking(false);
+    setUrl("https://");
+  };
+  const tb: CSSProperties = { ...btn, padding: "4px 10px", minWidth: 32 };
+  const urlOk = /^https:\/\/\S+$/.test(url) || url === "{{discount_link}}" || url === "{{shop_url}}";
+  return (
+    <div style={{ marginBottom: 6 }}>
+      <div role="toolbar" aria-label="Text formatting" style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+        <button type="button" style={{ ...tb, fontWeight: 800 }} aria-label="Bold" title="Bold" onClick={() => wrap("**", "bold text")}>B</button>
+        <button type="button" style={{ ...tb, fontStyle: "italic" }} aria-label="Italic" title="Italic" onClick={() => wrap("*", "italic text")}>I</button>
+        <button type="button" style={tb} aria-label="Link" title="Link" aria-expanded={linking} onClick={() => setLinking((l) => !l)}>Link</button>
+        <button type="button" style={tb} aria-label="Bulleted list" title="Bulleted list" onClick={list}>• List</button>
+      </div>
+      {linking && (
+        <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
+          <input
+            style={{ ...input, ...(urlOk ? {} : { borderColor: "#d92d20" }) }}
+            aria-label="Link address"
+            value={url}
+            onChange={(e) => setUrl(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                link();
+              }
+            }}
+          />
+          <button type="button" style={btn} disabled={!urlOk} onClick={link}>Add</button>
+        </div>
+      )}
+      {linking && <p style={small}>An https address, or {"{{discount_link}}"} to apply the customer&apos;s code.</p>}
+    </div>
+  );
+}
+
+function Text(props: { label: string; value: string; max: number; onChange: (v: string) => void; hint?: string; url?: "plain" | "link"; area?: boolean; rich?: boolean }) {
   const problem = props.url ? urlProblem(props.value, props.url === "link") : null;
+  const area = useRef<HTMLTextAreaElement>(null);
+  if (props.rich) {
+    return (
+      <Field label={props.label} hint={props.hint}>
+        <RichToolbar area={area} value={props.value} max={props.max} onChange={props.onChange} />
+        <textarea ref={area} style={{ ...input, minHeight: 110, resize: "vertical" }} maxLength={props.max} value={props.value} onChange={(e) => props.onChange(e.target.value)} />
+        <p style={small}>
+          Select text, then use B, I, Link or List. Typed as **bold**, *italic*, [text](https://…) and “- ” list lines.
+        </p>
+      </Field>
+    );
+  }
   return (
     <Field label={props.label} hint={problem ?? props.hint}>
       {props.area ? (
@@ -88,7 +171,7 @@ function SectionFields({ s, set }: { s: EmailSection; set: (s: EmailSection) => 
       return (
         <>
           <Text label="Heading" value={s.heading} max={120} onChange={(heading) => set({ ...s, heading })} />
-          <Text label="Text" area value={s.body} max={2000} hint="Leave a blank line between paragraphs." onChange={(body) => set({ ...s, body })} />
+          <Text label="Text" area rich value={s.body} max={2000} hint="Leave a blank line between paragraphs." onChange={(body) => set({ ...s, body })} />
           <Pick label="Alignment" value={s.align} options={ALIGN} onChange={(align) => set({ ...s, align })} />
         </>
       );
@@ -106,7 +189,7 @@ function SectionFields({ s, set }: { s: EmailSection; set: (s: EmailSection) => 
           <Text label="Image URL" value={s.imageUrl} max={2048} url="plain" onChange={(imageUrl) => set({ ...s, imageUrl })} />
           <Text label="Alt text" value={s.alt} max={120} onChange={(alt) => set({ ...s, alt })} />
           <Text label="Heading" value={s.heading} max={120} onChange={(heading) => set({ ...s, heading })} />
-          <Text label="Text" area value={s.body} max={600} onChange={(body) => set({ ...s, body })} />
+          <Text label="Text" area rich value={s.body} max={600} onChange={(body) => set({ ...s, body })} />
           <Text label="Button label" value={s.buttonLabel} max={40} onChange={(buttonLabel) => set({ ...s, buttonLabel })} />
           <Text label="Button link" value={s.buttonUrl} max={2048} url="link" hint="{{discount_link}} applies the customer's code." onChange={(buttonUrl) => set({ ...s, buttonUrl })} />
           <Pick label="Image position" value={s.imagePosition} options={[["left", "Left"], ["right", "Right"]]} onChange={(imagePosition) => set({ ...s, imagePosition })} />
@@ -115,12 +198,23 @@ function SectionFields({ s, set }: { s: EmailSection; set: (s: EmailSection) => 
     case "discount":
       return (
         <>
-          <p style={{ ...small, marginBottom: 10 }}>Shows the customer&apos;s own code in a box they can copy, plus a button that applies it for them.</p>
+          <p style={{ ...small, marginBottom: 10 }}>The customer&apos;s own code, plus a button that applies it for them.</p>
+          <label style={{ display: "flex", gap: 8, alignItems: "flex-start", marginBottom: 10, fontSize: 14 }}>
+            <input type="checkbox" checked={s.showCode} onChange={(e) => set({ ...s, showCode: e.target.checked })} style={{ marginTop: 3 }} />
+            <span>
+              Show the code in the email
+              <span style={{ ...small, display: "block" }}>
+                {s.showCode
+                  ? "Customers can copy it and type it at checkout."
+                  : "Hidden: the customer can only use it through the button, so it needs a button label. If the link does not apply the code on your checkout, they have no other way to get it."}
+              </span>
+            </span>
+          </label>
           <Text label="Heading" value={s.heading} max={120} onChange={(heading) => set({ ...s, heading })} />
-          <Text label="Description" area value={s.description} max={400} onChange={(description) => set({ ...s, description })} />
+          <Text label="Description" area rich value={s.description} max={400} onChange={(description) => set({ ...s, description })} />
           <Text label="Button label" value={s.buttonLabel} max={40} hint="Empty hides the button." onChange={(buttonLabel) => set({ ...s, buttonLabel })} />
           <Text label="After applying, send them to" value={s.redirectPath} max={200} hint='A store path such as /collections/sandals. Empty = home page.' onChange={(redirectPath) => set({ ...s, redirectPath })} />
-          <Text label="Conditions / expiry note" value={s.note} max={300} hint="e.g. Valid on your first order. Expires in 30 days." onChange={(note) => set({ ...s, note })} />
+          <Text label="Conditions / expiry note" area rich value={s.note} max={300} hint="e.g. Valid on your first order. Expires in 30 days." onChange={(note) => set({ ...s, note })} />
         </>
       );
     case "button":

@@ -25,6 +25,7 @@ export const defaultEmail: EmailTemplate = {
     {
       type: "discount",
       id: "discount",
+      showCode: true,
       heading: "Your welcome code",
       description: "Copy this code and enter it at checkout, or use the button to have it applied for you.",
       note: "",
@@ -72,7 +73,7 @@ export function newSection(type: EmailSectionType): EmailSection {
         imagePosition: "left",
       };
     case "discount":
-      return { type, id, heading: "Your welcome code", description: "", note: "", buttonLabel: "Shop now", redirectPath: "" };
+      return { type, id, showCode: true, heading: "Your welcome code", description: "", note: "", buttonLabel: "Shop now", redirectPath: "" };
     case "button":
       return { type, id, label: "Shop now", url: "{{discount_link}}", align: "center" };
     case "columns":
@@ -123,6 +124,7 @@ export const STARTERS: Starter[] = [
         {
           type: "discount",
           id: "discount",
+          showCode: true,
           heading: "Your welcome code",
           description: "Use this code at checkout.",
           note: "",
