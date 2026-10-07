@@ -280,10 +280,11 @@ export default function Dashboard() {
       <s-section heading="Quick actions">
         <s-grid gridTemplateColumns="repeat(auto-fit, minmax(220px, 1fr))" gap="base">
           {actions.map((a) => (
-            <s-clickable key={a.label} href={a.href} border="base" borderRadius="large" padding="base">
-              <s-stack direction="inline" gap="base" alignItems="center">
+            <s-clickable key={a.label} href={a.href} border="base" borderRadius="large" padding="base" inlineSize="100%">
+              {/* Icon on top, text below, the same in every card. */}
+              <s-stack direction="block" gap="small-200" alignItems="start">
                 <s-icon type={a.icon} />
-                <s-stack gap="none">
+                <s-stack direction="block" gap="none">
                   <s-text type="strong">{a.label}</s-text>
                   <s-text color="subdued">{a.detail}</s-text>
                 </s-stack>

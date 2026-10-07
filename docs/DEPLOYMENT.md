@@ -87,6 +87,9 @@ Do this to show each customer their own code in the email. Until it is done, not
    would do nothing for them, but switching it off avoids any chance of a duplicate.
 7. Claims made before this stay with Flow and are never emailed again by the app.
 
+Product sections need the `read_products` permission: add it to `SCOPES` on the server (already in `shopify.app.toml`),
+run `shopify app deploy`, then approve the new permission when Shopify asks in the admin. Settings shows whether it is granted.
+
 Notes: use JPG or PNG images (Outlook cannot show WebP). The email's button links to
 `https://<shop>.myshopify.com/discount/<CODE>`, which applies the code and redirects to your store.
 

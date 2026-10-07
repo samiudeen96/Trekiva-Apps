@@ -1,8 +1,10 @@
-import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
-import { renderEmail } from "../email/render";
+import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { useAppBridge } from "@shopify/app-bridge-react";
+import { renderEmail, sampleProducts } from "../email/render";
 import { newSection, SECTION_LABELS } from "../email/defaults";
 import { EMAIL_PLACEHOLDERS, type EmailSection, type EmailSectionType, type EmailTemplate } from "../email/schema";
 import type { RenderedEmail } from "../email/render";
+import { pushEdit, redoEdit, startHistory, undoEdit } from "../email/history";
 
 const SAMPLE_CODE = "WELCOME10-7KQ2M9XH";
 
@@ -154,8 +156,88 @@ function Color(props: { label: string; value: string; onChange: (v: string) => v
 
 const ALIGN: ["left" | "center" | "right", string][] = [["left", "Left"], ["center", "Center"], ["right", "Right"]];
 
+type ProductSection = Extract<EmailSection, { type: "product" }>;
+
+/** Which products an email shows: picked with Shopify's own product and collection pickers. */
+function ProductFields({ s, set }: { s: ProductSection; set: (s: EmailSection) => void }) {
+  const shopify = useAppBridge();
+  const pickCollection = async () => {
+    const picked = await shopify.resourcePicker({ type: "collection", multiple: false, action: "select" });
+    const c = picked?.[0];
+    if (c) set({ ...s, collectionId: c.id as ProductSection["collectionId"], collectionTitle: String(c.title ?? "").slice(0, 120) });
+  };
+  const pickProducts = async () => {
+    const picked = await shopify.resourcePicker({
+      type: "product",
+      multiple: 8,
+      action: "select",
+      filter: { variants: false },
+      selectionIds: s.productIds.map((id) => ({ id })),
+    });
+    if (!picked) return;
+    set({
+      ...s,
+      productIds: picked.map((p) => p.id) as ProductSection["productIds"],
+      productTitles: picked.map((p) => String(p.title ?? "").slice(0, 120)),
+    });
+  };
+  return (
+    <>
+      <Text label="Heading" value={s.heading} max={120} onChange={(heading) => set({ ...s, heading })} />
+      <Pick
+        label="Show"
+        value={s.source}
+        options={[["newest", "Newest products"], ["collection", "Products from a collection"], ["static", "Products I pick"]]}
+        onChange={(source) => set({ ...s, source })}
+      />
+      {s.source === "collection" && (
+        <>
+          <Field label="Collection" hint="For best sellers, pick a collection of your products and sort it by best selling.">
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <span style={{ flex: 1, fontSize: 14 }}>{s.collectionTitle || <span style={{ color: "#d92d20" }}>None chosen</span>}</span>
+              <button type="button" style={btn} onClick={pickCollection}>{s.collectionId ? "Change" : "Choose"}</button>
+            </div>
+          </Field>
+          <Pick
+            label="Order"
+            value={s.collectionSort}
+            options={[["best_selling", "Best selling"], ["manual", "The collection's own order"], ["newest", "Newest first"]]}
+            onChange={(collectionSort) => set({ ...s, collectionSort })}
+          />
+        </>
+      )}
+      {s.source === "static" && (
+        <Field label="Products" hint="Up to 8. If one is deleted or hidden from the online store before an email is sent, it is left out.">
+          {s.productTitles.length > 0 && (
+            <ul style={{ margin: "0 0 8px", paddingLeft: 18, fontSize: 14 }}>
+              {s.productTitles.map((t, i) => (
+                <li key={`${s.productIds[i]}-${i}`}>{t}</li>
+              ))}
+            </ul>
+          )}
+          <button type="button" style={btn} onClick={pickProducts}>{s.productIds.length ? "Change products" : "Choose products"}</button>
+        </Field>
+      )}
+      {s.source !== "static" && (
+        <Field label="How many">
+          <input type="number" style={input} min={1} max={8} value={s.count} onChange={(e) => set({ ...s, count: Math.min(8, Math.max(1, Number(e.target.value) || 1)) })} />
+        </Field>
+      )}
+      <Pick label="Columns" value={String(s.columns)} options={[["1", "1"], ["2", "2"], ["3", "3"]]} onChange={(c) => set({ ...s, columns: Number(c) as 1 | 2 | 3 })} />
+      <label style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 10, fontSize: 14 }}>
+        <input type="checkbox" checked={s.showPrice} onChange={(e) => set({ ...s, showPrice: e.target.checked })} />
+        Show the price
+      </label>
+      <Text label="Button label" value={s.buttonLabel} max={40} hint="Empty = no button; the image and name still link to the product." onChange={(buttonLabel) => set({ ...s, buttonLabel })} />
+      <p style={small}>The canvas shows sample products. Real products, prices and images are loaded each time an email is sent.</p>
+    </>
+  );
+}
+
 function SectionFields({ s, set }: { s: EmailSection; set: (s: EmailSection) => void }) {
   switch (s.type) {
+    case "product":
+      return <ProductFields s={s} set={set} />;
     case "header":
       return (
         <>
@@ -253,6 +335,7 @@ function summary(s: EmailSection): string {
     case "imageText":
       return s.heading;
     case "discount":
+    case "product":
       return s.heading;
     case "button":
       return s.label;
@@ -264,6 +347,7 @@ function summary(s: EmailSection): string {
 // The "Add section" menu, grouped like Shopify Messaging.
 const ADD_GROUPS: { label: string; types: EmailSectionType[] }[] = [
   { label: "Elements", types: ["text", "button", "image"] },
+  { label: "Product", types: ["product"] },
   { label: "Offer", types: ["discount"] },
   { label: "Layout", types: ["imageText", "columns", "header"] },
 ];
@@ -272,11 +356,62 @@ const panelTitle: CSSProperties = { margin: 0, fontSize: 14, fontWeight: 650 };
 const group: CSSProperties = { borderTop: "1px solid #ebebeb", padding: "14px 16px" };
 const groupTitle: CSSProperties = { margin: "0 0 10px", fontSize: 13, fontWeight: 650 };
 
+/** The template being edited, with undo and redo. */
+export function useTemplateHistory(initial: EmailTemplate) {
+  const [state, setState] = useState(() => startHistory(initial));
+  const set = useCallback((next: EmailTemplate) => setState((s) => pushEdit(s, next, Date.now())), []);
+  const undo = useCallback(() => setState(undoEdit), []);
+  const redo = useCallback(() => setState(redoEdit), []);
+  return { value: state.present, set, undo, redo, canUndo: state.past.length > 0, canRedo: state.future.length > 0 };
+}
+
+const LOOK_TYPES: EmailSectionType[] = ["text", "imageText", "discount", "button", "columns", "product"];
+
+/** Messaging's "Layout" group: the section's own background and vertical spacing. */
+function LookFields({ s, set }: { s: EmailSection; set: (s: EmailSection) => void }) {
+  if (!LOOK_TYPES.includes(s.type)) return null;
+  const look = s as EmailSection & { bg?: string; padY?: number | null };
+  const patch = (p: { bg?: string; padY?: number | null }) => set({ ...s, ...p } as EmailSection);
+  return (
+    <div style={group}>
+      <p style={groupTitle}>Layout</p>
+      <Field label="Background color">
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <input type="color" aria-label="Section background color" value={look.bg || "#ffffff"} onChange={(e) => patch({ bg: e.target.value })} style={{ width: 56, height: 34, padding: 2, border: "1px solid #8a8a8a", borderRadius: 6, background: "#fff" }} />
+          <span style={{ fontSize: 13, color: "#616161" }}>{look.bg || "Same as the email"}</span>
+          {look.bg ? <button type="button" style={btn} onClick={() => patch({ bg: "" })}>Reset</button> : null}
+        </div>
+      </Field>
+      <Field label="Top and bottom spacing (px)" hint="Empty = automatic.">
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <input
+            type="range"
+            aria-label="Top and bottom spacing"
+            min={0}
+            max={80}
+            value={look.padY ?? 16}
+            onChange={(e) => patch({ padY: Number(e.target.value) })}
+            style={{ flex: 1 }}
+          />
+          <span style={{ width: 52, fontSize: 13, textAlign: "right" }}>{look.padY == null ? "Auto" : `${look.padY} px`}</span>
+          {look.padY != null ? <button type="button" style={btn} onClick={() => patch({ padY: null })}>Auto</button> : null}
+        </div>
+      </Field>
+    </div>
+  );
+}
+
 export interface TemplateEditorProps {
   name: string;
   onNameChange: (name: string) => void;
   value: EmailTemplate;
   onChange: (t: EmailTemplate) => void;
+  undo: () => void;
+  redo: () => void;
+  canUndo: boolean;
+  canRedo: boolean;
+  /** Edits not saved yet, shown as a badge like Messaging's "Draft". */
+  dirty: boolean;
   /** Sender shown in Email details, e.g. "Trekiva <care@trekiva.com>". Null when sending is not set up. */
   from: string | null;
   /** Shown where the email says {{shop_name}}. */
@@ -291,9 +426,14 @@ export function TemplateEditor(p: TemplateEditorProps) {
   const [selected, setSelected] = useState<string | null>(null);
   const [device, setDevice] = useState<"desktop" | "mobile">("desktop");
   const [adding, setAdding] = useState(false);
+  const [search, setSearch] = useState("");
   const [to, setTo] = useState("");
+  const [dragFrom, setDragFrom] = useState<number | null>(null);
+  const [dragOver, setDragOver] = useState<number | null>(null);
   const scrollY = useRef(0);
   const frame = useRef<HTMLIFrameElement>(null);
+  const addBox = useRef<HTMLDivElement>(null);
+  const searchBox = useRef<HTMLInputElement>(null);
 
   const section = value.sections.find((s) => s.id === selected) ?? null;
   const index = section ? value.sections.indexOf(section) : -1;
@@ -307,6 +447,13 @@ export function TemplateEditor(p: TemplateEditorProps) {
     if (j < 0 || j >= value.sections.length) return;
     const next = [...value.sections];
     [next[i], next[j]] = [next[j], next[i]];
+    setSections(next);
+  };
+  const moveTo = (from: number, to: number) => {
+    if (from === to || from < 0 || to < 0 || from >= value.sections.length || to >= value.sections.length) return;
+    const next = [...value.sections];
+    const [item] = next.splice(from, 1);
+    next.splice(to, 0, item);
     setSections(next);
   };
   const duplicate = (s: EmailSection) => {
@@ -329,10 +476,11 @@ export function TemplateEditor(p: TemplateEditorProps) {
     setSections(next);
     setSelected(s.id);
     setAdding(false);
+    setSearch("");
   };
   const cannotDelete = (s: EmailSection) =>
     value.sections.length === 1 || (s.type === "discount" && discounts === 1)
-      ? "Keep at least one discount section: it shows the customer's code"
+      ? "Keep at least one discount section: it carries the customer's code"
       : null;
 
   // Clicks inside the canvas select a section (the preview posts the section id back).
@@ -349,32 +497,186 @@ export function TemplateEditor(p: TemplateEditorProps) {
     return () => window.removeEventListener("message", onMessage);
   }, []);
 
+  // Undo / redo shortcuts, but never while typing: a field keeps its own native undo.
+  const { undo, redo } = p;
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const el = e.target as HTMLElement | null;
+      if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT" || el.isContentEditable)) return;
+      if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== "z") return;
+      e.preventDefault();
+      if (e.shiftKey) redo();
+      else undo();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [undo, redo]);
+
+  // The Add menu closes on Escape and on a click anywhere else.
+  useEffect(() => {
+    if (!adding) return;
+    searchBox.current?.focus();
+    const onDown = (e: MouseEvent) => {
+      if (addBox.current && !addBox.current.contains(e.target as Node)) setAdding(false);
+    };
+    const onEsc = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setAdding(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onEsc);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onEsc);
+    };
+  }, [adding]);
+
   const [html, setHtml] = useState(() => build(value, p.shopName, null, 0));
   useEffect(() => {
     const t = setTimeout(() => setHtml(build(value, p.shopName, selected, scrollY.current)), 200);
     return () => clearTimeout(t);
   }, [value, p.shopName, selected]);
 
+  const q = search.trim().toLowerCase();
+  const matches = (t: EmailSectionType) => !q || SECTION_LABELS[t].toLowerCase().includes(q);
+  const visibleGroups = ADD_GROUPS.map((g) => ({ ...g, types: g.types.filter(matches) })).filter((g) => g.types.length);
+  const circle: CSSProperties = { ...btn, padding: "6px 10px" };
+
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "minmax(260px, 320px) minmax(0, 1fr)", gap: 16, alignItems: "start" }}>
-      {/* Left: settings for the whole email, or for the selected section. */}
-      <aside style={{ ...box, padding: 0, position: "sticky", top: 12, maxHeight: "calc(100vh - 24px)", overflowY: "auto" }}>
-        {section ? (
-          <>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "14px 16px" }}>
-              <button type="button" style={{ ...btn, padding: "4px 8px" }} aria-label="Back to email settings" onClick={() => setSelected(null)}>
-                ←
-              </button>
-              <h3 style={panelTitle}>{SECTION_LABELS[section.type]}</h3>
+    <div style={{ display: "grid", gap: 12 }}>
+      {/* Top bar, like Messaging's: history, devices, status and Send test. */}
+      <div style={{ ...box, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", position: "sticky", top: 0, zIndex: 4 }}>
+        <button type="button" style={circle} aria-label="Undo" title="Undo (Ctrl/Cmd+Z)" disabled={!p.canUndo} onClick={p.undo}>↶ Undo</button>
+        <button type="button" style={circle} aria-label="Redo" title="Redo (Ctrl/Cmd+Shift+Z)" disabled={!p.canRedo} onClick={p.redo}>Redo ↷</button>
+        <span style={{ width: 1, height: 22, background: "#ddd", margin: "0 4px" }} />
+        <button type="button" aria-pressed={device === "desktop"} style={{ ...circle, ...(device === "desktop" ? { background: "#1a1a1a", color: "#fff" } : {}) }} onClick={() => setDevice("desktop")}>Desktop</button>
+        <button type="button" aria-pressed={device === "mobile"} style={{ ...circle, ...(device === "mobile" ? { background: "#1a1a1a", color: "#fff" } : {}) }} onClick={() => setDevice("mobile")}>Mobile</button>
+        <span
+          role="status"
+          style={{ fontSize: 12, fontWeight: 600, padding: "3px 8px", borderRadius: 999, background: p.dirty ? "#fff1d6" : "#e3f1df", color: p.dirty ? "#7a4a00" : "#1b5e20" }}
+        >
+          {p.dirty ? "Unsaved changes" : "All changes saved"}
+        </span>
+        <div style={{ flex: 1 }} />
+        <input type="email" aria-label="Send a test to" style={{ ...input, width: 220 }} placeholder="you@example.com" value={to} onChange={(e) => setTo(e.target.value)} />
+        <button type="button" style={circle} disabled={!p.from || !to || p.sendingTest} onClick={() => p.onSendTest(to)}>
+          {p.sendingTest ? "Sending…" : "Send test"}
+        </button>
+      </div>
+      {p.testResult && <p style={{ ...small, margin: 0, color: p.testResult.ok ? "#047b5d" : "#d92d20" }}>{p.testResult.message}</p>}
+
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(260px, 320px) minmax(0, 1fr)", gap: 16, alignItems: "start" }}>
+        {/* Left: settings for the whole email, or for the selected section. */}
+        <aside style={{ ...box, padding: 0, position: "sticky", top: 70, maxHeight: "calc(100vh - 90px)", overflowY: "auto" }}>
+          {section ? (
+            <>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "14px 16px" }}>
+                <button type="button" style={{ ...btn, padding: "4px 8px" }} aria-label="Back to email settings" onClick={() => setSelected(null)}>←</button>
+                <h3 style={panelTitle}>{SECTION_LABELS[section.type]}</h3>
+              </div>
+              <div style={group}>
+                <SectionFields s={section} set={(next) => setSections(value.sections.map((x) => (x.id === section.id ? next : x)))} />
+              </div>
+              <LookFields s={section} set={(next) => setSections(value.sections.map((x) => (x.id === section.id ? next : x)))} />
+            </>
+          ) : (
+            <>
+              <div style={{ padding: "14px 16px" }}>
+                <h3 style={panelTitle}>Email</h3>
+                <p style={small}>Click a section in the email to edit it, or drag the ⋮⋮ handles below to reorder.</p>
+              </div>
+              <div style={group}>
+                <Text label="Template name" value={p.name} max={80} hint="Only you see this. Campaigns pick templates by name." onChange={p.onNameChange} />
+              </div>
+              <div style={group}>
+                <p style={groupTitle}>Sections</p>
+                <div style={{ display: "grid", gap: 4 }}>
+                  {value.sections.map((s, i) => (
+                    <div
+                      key={s.id}
+                      draggable
+                      onDragStart={(e) => {
+                        setDragFrom(i);
+                        e.dataTransfer.effectAllowed = "move";
+                      }}
+                      onDragOver={(e) => {
+                        if (dragFrom === null) return;
+                        e.preventDefault();
+                        setDragOver(i);
+                      }}
+                      onDrop={(e) => {
+                        e.preventDefault();
+                        if (dragFrom !== null) moveTo(dragFrom, i);
+                        setDragFrom(null);
+                        setDragOver(null);
+                      }}
+                      onDragEnd={() => {
+                        setDragFrom(null);
+                        setDragOver(null);
+                      }}
+                      style={{ display: "flex", alignItems: "center", gap: 4, opacity: dragFrom === i ? 0.4 : 1, borderTop: dragOver === i && dragFrom !== null && dragFrom !== i ? "2px solid #2c6ecb" : "2px solid transparent" }}
+                    >
+                      <span aria-hidden="true" title="Drag to reorder" style={{ cursor: "grab", color: "#8a8a8a", padding: "0 4px", userSelect: "none" }}>⋮⋮</span>
+                      <button type="button" style={{ ...btn, flex: 1, textAlign: "left", border: "1px solid #e3e3e3" }} onClick={() => setSelected(s.id)}>
+                        {SECTION_LABELS[s.type]}
+                        {summary(s) && <span style={{ color: "#616161" }}> · {summary(s).slice(0, 22)}</span>}
+                      </button>
+                      <button type="button" style={{ ...btn, padding: "6px 8px" }} aria-label={`Move ${SECTION_LABELS[s.type]} up`} disabled={i === 0} onClick={() => move(i, -1)}>↑</button>
+                      <button type="button" style={{ ...btn, padding: "6px 8px" }} aria-label={`Move ${SECTION_LABELS[s.type]} down`} disabled={i === value.sections.length - 1} onClick={() => move(i, 1)}>↓</button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div style={group}>
+                <p style={groupTitle}>Email colors</p>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 4 }}>
+                  <Color label="Page background" value={value.brand.backgroundColor} onChange={(backgroundColor) => setBrand({ backgroundColor })} />
+                  <Color label="Content background" value={value.brand.contentBackgroundColor} onChange={(contentBackgroundColor) => setBrand({ contentBackgroundColor })} />
+                  <Color label="Text" value={value.brand.textColor} onChange={(textColor) => setBrand({ textColor })} />
+                  <Color label="Button / code box" value={value.brand.buttonColor} onChange={(buttonColor) => setBrand({ buttonColor })} />
+                  <Color label="Button text" value={value.brand.buttonTextColor} onChange={(buttonTextColor) => setBrand({ buttonTextColor })} />
+                </div>
+              </div>
+              <div style={group}>
+                <p style={groupTitle}>Style</p>
+                <Pick label="Font" value={value.brand.fontFamily} options={[["sans", "Sans-serif"], ["serif", "Serif"]]} onChange={(fontFamily) => setBrand({ fontFamily })} />
+                <Field label="Content width (px)">
+                  <input type="number" style={input} min={480} max={680} value={value.brand.width} onChange={(e) => setBrand({ width: Number(e.target.value) || 600 })} />
+                </Field>
+              </div>
+              <div style={group}>
+                <p style={groupTitle}>Footer</p>
+                <Text label="Sender details" area value={value.footer.address} max={300} hint="Business name and postal address. The unsubscribe link is always added and cannot be removed." onChange={(address) => onChange({ ...value, footer: { address } })} />
+              </div>
+            </>
+          )}
+        </aside>
+
+        {/* Right: email details and the live canvas. */}
+        <div style={{ display: "grid", gap: 12, minWidth: 0 }}>
+          <details open style={box}>
+            <summary style={{ ...groupTitle, margin: 0, cursor: "pointer" }}>Email details</summary>
+            <div style={{ display: "grid", gridTemplateColumns: "100px 1fr", gap: "4px 12px", alignItems: "center", fontSize: 13, marginTop: 12 }}>
+              <span style={{ color: "#616161" }}>To</span>
+              <span>The customer who claimed (subscribers get this email; others get only their code)</span>
+              <span style={{ color: "#616161" }}>From</span>
+              <span>{p.from ?? "Not set up yet: set EMAIL_FROM (see Settings)"}</span>
             </div>
-            <div style={group}>
-              <SectionFields s={section} set={(next) => setSections(value.sections.map((x) => (x.id === section.id ? next : x)))} />
+            <div style={{ marginTop: 12 }}>
+              <Text label="Subject" value={value.subject} max={150} onChange={(subject) => onChange({ ...value, subject })} />
+              <Text label="Preview text" value={value.previewText} max={150} hint="The grey line after the subject in the inbox." onChange={(previewText) => onChange({ ...value, previewText })} />
             </div>
-            <div style={group}>
-              <p style={groupTitle}>Arrange</p>
-              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                <button type="button" style={btn} disabled={index === 0} onClick={() => move(index, -1)}>Move up</button>
-                <button type="button" style={btn} disabled={index === value.sections.length - 1} onClick={() => move(index, 1)}>Move down</button>
+            <p style={small}>
+              Use {EMAIL_PLACEHOLDERS.map((x) => x.token).join(", ")} anywhere. {EMAIL_PLACEHOLDERS.map((x) => `${x.token}: ${x.help}`).join(". ")}.
+            </p>
+          </details>
+
+          {/* Actions for the selected section, where Messaging floats them beside it. */}
+          <div style={{ ...box, display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", minHeight: 26 }} role="toolbar" aria-label="Selected section">
+            {section ? (
+              <>
+                <span style={{ fontWeight: 600, fontSize: 13, marginRight: 4 }}>{SECTION_LABELS[section.type]}</span>
+                <button type="button" style={btn} disabled={index === 0} onClick={() => move(index, -1)}>↑ Move up</button>
+                <button type="button" style={btn} disabled={index === value.sections.length - 1} onClick={() => move(index, 1)}>↓ Move down</button>
                 <button type="button" style={btn} disabled={full} onClick={() => duplicate(section)}>Duplicate</button>
                 <button
                   type="button"
@@ -385,128 +687,67 @@ export function TemplateEditor(p: TemplateEditorProps) {
                 >
                   Delete
                 </button>
-              </div>
-              {cannotDelete(section) && <p style={small}>{cannotDelete(section)}</p>}
-            </div>
-          </>
-        ) : (
-          <>
-            <div style={{ padding: "14px 16px" }}>
-              <h3 style={panelTitle}>Email</h3>
-              <p style={small}>Click a section in the email to edit it.</p>
-            </div>
-            <div style={group}>
-              <Text label="Template name" value={p.name} max={80} hint="Only you see this. Campaigns pick templates by name." onChange={p.onNameChange} />
-            </div>
-            <div style={group}>
-              <p style={groupTitle}>Sections</p>
-              <div style={{ display: "grid", gap: 4 }}>
-                {value.sections.map((s, i) => (
-                  <div key={s.id} style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                    <button type="button" style={{ ...btn, flex: 1, textAlign: "left", border: "1px solid #e3e3e3" }} onClick={() => setSelected(s.id)}>
-                      {SECTION_LABELS[s.type]}
-                      {summary(s) && <span style={{ color: "#616161" }}> · {summary(s).slice(0, 22)}</span>}
-                    </button>
-                    <button type="button" style={{ ...btn, padding: "6px 8px" }} aria-label={`Move ${SECTION_LABELS[s.type]} up`} disabled={i === 0} onClick={() => move(i, -1)}>↑</button>
-                    <button type="button" style={{ ...btn, padding: "6px 8px" }} aria-label={`Move ${SECTION_LABELS[s.type]} down`} disabled={i === value.sections.length - 1} onClick={() => move(i, 1)}>↓</button>
+                <button type="button" style={{ ...btn, marginLeft: "auto" }} onClick={() => setSelected(null)}>Done</button>
+              </>
+            ) : (
+              <span style={{ fontSize: 13, color: "#616161" }}>Click a section in the email to edit it.</span>
+            )}
+          </div>
+
+          <div style={{ display: "flex", justifyContent: "center", background: "#e3e3e3", borderRadius: 8, padding: 12 }}>
+            <iframe
+              ref={frame}
+              title="Email canvas: click a section to edit it"
+              // Scripts only: the preview runs with an opaque origin and cannot reach this page.
+              sandbox="allow-scripts"
+              srcDoc={html}
+              style={{ width: device === "mobile" ? 375 : "100%", maxWidth: "100%", height: 720, border: 0, borderRadius: 6, background: "#fff" }}
+            />
+          </div>
+
+          <div ref={addBox} style={{ position: "relative" }}>
+            <button type="button" style={{ ...btn, background: "#2c6ecb", color: "#fff", borderColor: "#2c6ecb" }} disabled={full} aria-expanded={adding} aria-haspopup="menu" onClick={() => setAdding((a) => !a)}>
+              + Add section{section ? ` after ${SECTION_LABELS[section.type]}` : ""}
+            </button>
+            {full && <span style={{ ...small, marginLeft: 8 }}>20 sections is the maximum.</span>}
+            {adding && (
+              <div role="menu" style={{ ...box, position: "absolute", bottom: "calc(100% + 6px)", left: 0, width: 260, zIndex: 6, boxShadow: "0 6px 20px rgba(0,0,0,.15)", padding: 8, maxHeight: 360, overflowY: "auto" }}>
+                <input
+                  ref={searchBox}
+                  style={{ ...input, marginBottom: 6 }}
+                  placeholder="Search sections"
+                  aria-label="Search sections"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && visibleGroups[0]) {
+                      e.preventDefault();
+                      add(visibleGroups[0].types[0]);
+                    }
+                  }}
+                />
+                {visibleGroups.length === 0 && <p style={{ ...small, margin: 6 }}>No section matches “{search}”.</p>}
+                {visibleGroups.map((g) => (
+                  <div key={g.label} style={{ marginBottom: 6 }}>
+                    <p style={{ ...small, margin: "4px 6px", fontWeight: 600 }}>{g.label}</p>
+                    {g.types.map((t) => (
+                      <button key={t} type="button" role="menuitem" style={{ ...btn, border: 0, width: "100%", textAlign: "left" }} onClick={() => add(t)}>
+                        {SECTION_LABELS[t]}
+                      </button>
+                    ))}
                   </div>
                 ))}
               </div>
-            </div>
-            <div style={group}>
-              <p style={groupTitle}>Email colors</p>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 4 }}>
-                <Color label="Page background" value={value.brand.backgroundColor} onChange={(backgroundColor) => setBrand({ backgroundColor })} />
-                <Color label="Content background" value={value.brand.contentBackgroundColor} onChange={(contentBackgroundColor) => setBrand({ contentBackgroundColor })} />
-                <Color label="Text" value={value.brand.textColor} onChange={(textColor) => setBrand({ textColor })} />
-                <Color label="Button / code box" value={value.brand.buttonColor} onChange={(buttonColor) => setBrand({ buttonColor })} />
-                <Color label="Button text" value={value.brand.buttonTextColor} onChange={(buttonTextColor) => setBrand({ buttonTextColor })} />
-              </div>
-            </div>
-            <div style={group}>
-              <p style={groupTitle}>Style</p>
-              <Pick label="Font" value={value.brand.fontFamily} options={[["sans", "Sans-serif"], ["serif", "Serif"]]} onChange={(fontFamily) => setBrand({ fontFamily })} />
-              <Field label="Content width (px)">
-                <input type="number" style={input} min={480} max={680} value={value.brand.width} onChange={(e) => setBrand({ width: Number(e.target.value) || 600 })} />
-              </Field>
-            </div>
-            <div style={group}>
-              <p style={groupTitle}>Footer</p>
-              <Text label="Sender details" area value={value.footer.address} max={300} hint="Business name and postal address. The unsubscribe link is always added and cannot be removed." onChange={(address) => onChange({ ...value, footer: { address } })} />
-            </div>
-          </>
-        )}
-      </aside>
-
-      {/* Right: email details and the live canvas. */}
-      <div style={{ display: "grid", gap: 12, minWidth: 0 }}>
-        <div style={box}>
-          <p style={{ ...groupTitle, marginBottom: 12 }}>Email details</p>
-          <div style={{ display: "grid", gridTemplateColumns: "100px 1fr", gap: "4px 12px", alignItems: "center", fontSize: 13 }}>
-            <span style={{ color: "#616161" }}>To</span>
-            <span>The customer who claimed (subscribers get this email; others get only their code)</span>
-            <span style={{ color: "#616161" }}>From</span>
-            <span>{p.from ?? "Not set up yet: set EMAIL_FROM (see Settings)"}</span>
+            )}
           </div>
-          <div style={{ marginTop: 12 }}>
-            <Text label="Subject" value={value.subject} max={150} onChange={(subject) => onChange({ ...value, subject })} />
-            <Text label="Preview text" value={value.previewText} max={150} hint="The grey line after the subject in the inbox." onChange={(previewText) => onChange({ ...value, previewText })} />
-          </div>
-          <p style={small}>
-            Use {EMAIL_PLACEHOLDERS.map((x) => x.token).join(", ")} anywhere. {EMAIL_PLACEHOLDERS.map((x) => `${x.token}: ${x.help}`).join(". ")}.
-          </p>
-        </div>
-
-        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-          <div style={{ display: "flex", gap: 4 }}>
-            <button type="button" aria-pressed={device === "desktop"} style={{ ...btn, ...(device === "desktop" ? { background: "#1a1a1a", color: "#fff" } : {}) }} onClick={() => setDevice("desktop")}>Desktop</button>
-            <button type="button" aria-pressed={device === "mobile"} style={{ ...btn, ...(device === "mobile" ? { background: "#1a1a1a", color: "#fff" } : {}) }} onClick={() => setDevice("mobile")}>Mobile</button>
-          </div>
-          <div style={{ flex: 1 }} />
-          <input type="email" aria-label="Send a test to" style={{ ...input, width: 220 }} placeholder="you@example.com" value={to} onChange={(e) => setTo(e.target.value)} />
-          <button type="button" style={btn} disabled={!p.from || !to || p.sendingTest} onClick={() => p.onSendTest(to)}>
-            {p.sendingTest ? "Sending…" : "Send test"}
-          </button>
-        </div>
-        {p.testResult && <p style={{ ...small, margin: 0, color: p.testResult.ok ? "#047b5d" : "#d92d20" }}>{p.testResult.message}</p>}
-
-        <div style={{ display: "flex", justifyContent: "center", background: "#e3e3e3", borderRadius: 8, padding: 12 }}>
-          <iframe
-            ref={frame}
-            title="Email canvas: click a section to edit it"
-            // Scripts only: the preview runs with an opaque origin and cannot reach this page.
-            sandbox="allow-scripts"
-            srcDoc={html}
-            style={{ width: device === "mobile" ? 375 : "100%", maxWidth: "100%", height: 720, border: 0, borderRadius: 6, background: "#fff" }}
-          />
-        </div>
-
-        <div style={{ position: "relative" }}>
-          <button type="button" style={{ ...btn, background: "#2c6ecb", color: "#fff", borderColor: "#2c6ecb" }} disabled={full} aria-expanded={adding} onClick={() => setAdding((a) => !a)}>
-            + Add section{section ? ` after ${SECTION_LABELS[section.type]}` : ""}
-          </button>
-          {full && <span style={{ ...small, marginLeft: 8 }}>20 sections is the maximum.</span>}
-          {adding && (
-            <div role="menu" style={{ ...box, position: "absolute", bottom: "calc(100% + 6px)", left: 0, width: 240, zIndex: 5, boxShadow: "0 6px 20px rgba(0,0,0,.15)", padding: 8 }}>
-              {ADD_GROUPS.map((g) => (
-                <div key={g.label} style={{ marginBottom: 6 }}>
-                  <p style={{ ...small, margin: "4px 6px", fontWeight: 600 }}>{g.label}</p>
-                  {g.types.map((t) => (
-                    <button key={t} type="button" role="menuitem" style={{ ...btn, border: 0, width: "100%", textAlign: "left" }} onClick={() => add(t)}>
-                      {SECTION_LABELS[t]}
-                    </button>
-                  ))}
-                </div>
-              ))}
-            </div>
-          )}
         </div>
       </div>
     </div>
   );
 }
 
-const SAMPLE_VARS = (shopName: string) => ({
+const SAMPLE_VARS = (shopName: string, t: EmailTemplate) => ({
+  products: sampleProducts(t),
   code: SAMPLE_CODE,
   discountBase: `https://example.myshopify.com/discount/${SAMPLE_CODE}`,
   shopName,
@@ -516,10 +757,10 @@ const SAMPLE_VARS = (shopName: string) => ({
 });
 
 function build(t: EmailTemplate, shopName: string, selectedId: string | null, scrollY: number): string {
-  return renderEmail({ template: t, vars: SAMPLE_VARS(shopName), preview: { selectedId, scrollY } }).html;
+  return renderEmail({ template: t, vars: SAMPLE_VARS(shopName, t), preview: { selectedId, scrollY } }).html;
 }
 
 /** Read-only preview (no editing script), e.g. for picking a template in a campaign. */
 export function renderTemplatePreview(t: EmailTemplate, shopName: string): RenderedEmail {
-  return renderEmail({ template: t, vars: SAMPLE_VARS(shopName) });
+  return renderEmail({ template: t, vars: SAMPLE_VARS(shopName, t) });
 }

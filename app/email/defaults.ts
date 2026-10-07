@@ -85,6 +85,22 @@ export function newSection(type: EmailSectionType): EmailSection {
           { title: "Easy returns", text: "Not right? Send it back." },
         ],
       };
+    case "product":
+      return {
+        type,
+        id,
+        heading: "You might also like",
+        source: "newest",
+        collectionId: null,
+        collectionTitle: "",
+        collectionSort: "best_selling",
+        productIds: [],
+        productTitles: [],
+        count: 4,
+        columns: 2,
+        showPrice: true,
+        buttonLabel: "",
+      };
   }
 }
 
@@ -96,6 +112,7 @@ export const SECTION_LABELS: Record<EmailSectionType, string> = {
   discount: "Discount code",
   button: "Button",
   columns: "Columns",
+  product: "Products",
 };
 
 export interface Starter {

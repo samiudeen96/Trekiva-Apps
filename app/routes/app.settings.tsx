@@ -8,12 +8,14 @@ import {
   checkMetafieldDefinitions,
   checkShopify,
   checkWriteAccess,
+  missingScopes,
   type Check,
 } from "../utils/health.server";
 import { TAG_CLAIMED, TAG_EMAIL_SENT } from "../claims/handoff";
 import { ensureMetafieldDefinitions } from "../shopify/handoff.server";
 import { createEmailGateway, emailConfig } from "../email/email.server";
 import { createStoreUrlResolver } from "../shopify/store-url.server";
+import { createProductResolver } from "../shopify/products.server";
 import { claimRepository } from "../repositories/claim.repository";
 import { campaignRepository } from "../repositories/campaign.repository";
 import { getCodeDiscount } from "../discounts/discounts.server";
@@ -88,6 +90,12 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       ["Granted scopes", shopifyChecks.scopes],
       ["Customer, metafield and tag write access", access.customers],
       ["Discount write access", access.discounts],
+      [
+        "Product access (for the email's product section)",
+        missingScopes(["read_products"], session.scope).length
+          ? { ok: false, detail: "read_products is missing, so product sections are left out of emails. Add it to SCOPES, run shopify app deploy and approve the new permission." }
+          : { ok: true, detail: "read_products granted: the email can show your products" },
+      ],
       ["Database", database],
       ["Active campaign", activeCampaign],
       ["Linked Shopify discount", discounts],
@@ -129,7 +137,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const service = new ClaimService(
     createCustomerGateway(admin),
     createDiscountCodeGateway(admin),
-    mail ? createEmailGateway(mail, fetch, createStoreUrlResolver(admin)) : undefined,
+    mail ? createEmailGateway(mail, fetch, createStoreUrlResolver(admin), createProductResolver(admin)) : undefined,
   );
   const retry = await retryClaims(rows, ({ campaignId, email }) =>
     service.claim({ shopDomain: session.shop, campaignId, email }),

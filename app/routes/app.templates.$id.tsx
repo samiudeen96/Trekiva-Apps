@@ -9,7 +9,8 @@ import { resolveEmailTemplate } from "../email/defaults";
 import { parseTemplateForm } from "../email/template-form";
 import { createEmailGateway, emailConfig, senderName } from "../email/email.server";
 import { createStoreUrlResolver } from "../shopify/store-url.server";
-import { TemplateEditor } from "../components/TemplateEditor";
+import { createProductResolver } from "../shopify/products.server";
+import { TemplateEditor, useTemplateHistory } from "../components/TemplateEditor";
 import { logger } from "../utils/logger.server";
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
@@ -45,7 +46,7 @@ export const action = async ({ request, params }: ActionFunctionArgs): Promise<A
     if (!to.success) return fail("Enter a valid email address.");
     if (!parsed.ok) return fail(parsed.error);
     try {
-      await createEmailGateway(mail, fetch, createStoreUrlResolver(admin)).sendTest({ to: to.data, shopDomain: session.shop, template: parsed.template });
+      await createEmailGateway(mail, fetch, createStoreUrlResolver(admin), createProductResolver(admin)).sendTest({ to: to.data, shopDomain: session.shop, template: parsed.template });
       return { saved: false, error: null, test: { ok: true, message: `Test sent to ${to.data} with a sample code.` } };
     } catch (err) {
       logger.error({ err, shop: session.shop }, "test email failed");
@@ -66,7 +67,8 @@ export default function EditTemplate() {
   const submit = useSubmit();
   const shopify = useAppBridge();
   const [name, setName] = useState(loaded.name);
-  const [template, setTemplate] = useState(loaded.template);
+  const history = useTemplateHistory(loaded.template);
+  const template = history.value;
   const [savedJson, setSavedJson] = useState(() => JSON.stringify([loaded.name, loaded.template]));
   const dirty = JSON.stringify([name, template]) !== savedJson;
   const intent = nav.formData?.get("intent");
@@ -124,7 +126,12 @@ export default function EditTemplate() {
         name={name}
         onNameChange={setName}
         value={template}
-        onChange={setTemplate}
+        onChange={history.set}
+        undo={history.undo}
+        redo={history.redo}
+        canUndo={history.canUndo}
+        canRedo={history.canRedo}
+        dirty={dirty}
         from={loaded.from}
         shopName={loaded.shopName}
         onSendTest={(to) => post({ intent: "send-test", to })}

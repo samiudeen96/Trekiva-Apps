@@ -1,6 +1,6 @@
 import type { EmailGateway } from "../claims/types";
 import { env } from "../utils/env.server";
-import { renderEmail, type EmailVars } from "./render";
+import { renderEmail, sampleProducts, type EmailVars, type ProductCard } from "./render";
 import type { EmailTemplate } from "./schema";
 import { signUnsubscribe } from "./unsubscribe";
 
@@ -41,6 +41,9 @@ export function discountBase(storeUrl: string, code: string): string {
 
 /** Resolves a shop's customer-facing address. The default is the internal myshopify address. */
 export type StoreUrlResolver = (shopDomain: string) => Promise<string>;
+/** Looks up the live products for a template's product sections, keyed by section id. */
+export type ProductResolver = (template: EmailTemplate) => Promise<Record<string, ProductCard[]>>;
+
 const internalAddress: StoreUrlResolver = async (shopDomain) => `https://${shopDomain}`;
 
 export interface TestEmailInput {
@@ -57,6 +60,7 @@ export function createEmailGateway(
   cfg: EmailConfig,
   fetchImpl: typeof fetch = fetch,
   storeUrlFor: StoreUrlResolver = internalAddress,
+  productsFor?: ProductResolver,
 ): AppEmailGateway {
   const shopName = (shopDomain: string) => senderName(cfg.from) ?? shopDomain;
 
@@ -100,7 +104,10 @@ export function createEmailGateway(
         ? `${cfg.appUrl}/unsubscribe?t=${signUnsubscribe({ shop: input.shopDomain, customerId: input.customerId }, cfg.secret)}`
         : null;
       const storeUrl = await storeUrlFor(input.shopDomain);
+      // Only the full email shows products. A failed lookup leaves them out instead of failing the claim.
+      const products = subscribed && productsFor ? await productsFor(input.template).catch(() => ({})) : undefined;
       const vars: EmailVars = {
+        products,
         code: input.discountCode,
         discountBase: discountBase(storeUrl, input.discountCode),
         shopName: shopName(input.shopDomain),
@@ -126,9 +133,14 @@ export function createEmailGateway(
     async sendTest({ to, shopDomain, template }) {
       const sample = "WELCOME10-7KQ2M9XH";
       const storeUrl = await storeUrlFor(shopDomain);
+      // The test shows the real products when they can be loaded, and samples when they cannot.
+      const live = productsFor ? await productsFor(template).catch(() => ({})) : {};
+      const samples = sampleProducts(template);
+      const products = Object.fromEntries(Object.entries(samples).map(([id, s]) => [id, (live as Record<string, ProductCard[]>)[id]?.length ? (live as Record<string, ProductCard[]>)[id] : s]));
       const { subject, html, text } = renderEmail({
         template,
         vars: {
+          products,
           code: sample,
           discountBase: discountBase(storeUrl, sample),
           shopName: shopName(shopDomain),

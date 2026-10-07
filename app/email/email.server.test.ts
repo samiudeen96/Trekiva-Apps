@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { createEmailGateway, discountBase, emailConfig, senderName, type EmailConfig } from "./email.server";
-import { defaultEmail } from "./defaults";
+import { defaultEmail, newSection } from "./defaults";
+import type { EmailTemplate } from "./schema";
 import { verifyUnsubscribe } from "./unsubscribe";
 
 const cfg: EmailConfig = {
@@ -106,6 +107,42 @@ describe("Resend gateway: links use the store's own domain", () => {
       to: "me@x.co", shopDomain: base.shopDomain, template: defaultEmail,
     });
     expect(payload(calls).html).toContain("https://trekiva.com/discount/");
+  });
+});
+
+describe("Resend gateway: products", () => {
+  const withProducts: EmailTemplate = {
+    ...defaultEmail,
+    sections: [...defaultEmail.sections, { ...newSection("product"), id: "p1", heading: "More for you" } as EmailTemplate["sections"][number]],
+  };
+  const card = { title: "Sandal", url: "https://trekiva.com/products/s", imageUrl: "", imageAlt: "", price: "$10.00" };
+
+  it("shows live products to a subscribed customer", async () => {
+    const { fetchImpl, calls } = resend();
+    await createEmailGateway(cfg, fetchImpl, undefined, async () => ({ p1: [card] })).sendWelcomeOffer({ ...base, template: withProducts });
+    expect(payload(calls).html).toContain("More for you");
+    expect(payload(calls).html).toContain("https://trekiva.com/products/s");
+  });
+
+  it("does not look products up for someone who only gets their code", async () => {
+    const { fetchImpl, calls } = resend();
+    const look = vi.fn(async () => ({ p1: [card] }));
+    await createEmailGateway(cfg, fetchImpl, undefined, look).sendWelcomeOffer({ ...base, template: withProducts, emailEligibility: "NOT_SUBSCRIBED" });
+    expect(look).not.toHaveBeenCalled();
+    expect(payload(calls).html).not.toContain("More for you");
+  });
+
+  it("still sends the code when the product lookup fails", async () => {
+    const { fetchImpl, calls } = resend();
+    await createEmailGateway(cfg, fetchImpl, undefined, async () => { throw new Error("denied"); }).sendWelcomeOffer({ ...base, template: withProducts });
+    expect(payload(calls).html).toContain("WELCOME10-7KQ2M9XH");
+    expect(payload(calls).html).not.toContain("More for you");
+  });
+
+  it("the test email falls back to sample products when none can be loaded", async () => {
+    const { fetchImpl, calls } = resend();
+    await createEmailGateway(cfg, fetchImpl, undefined, async () => ({})).sendTest({ to: "me@x.co", shopDomain: base.shopDomain, template: withProducts });
+    expect(payload(calls).html).toContain("Sample product 1");
   });
 });
 

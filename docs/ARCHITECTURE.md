@@ -93,7 +93,7 @@ docs/
 
 ## 4. Shopify scopes
 
-`read_customers,write_customers,read_discounts,write_discounts`
+`read_customers,write_customers,read_discounts,write_discounts,read_products`
 
 - customers: find by email, create, write `trekiva.*` metafields.
 - discounts: list/read existing native code discounts. `write_discounts` is used only to add each claim's own
@@ -138,8 +138,15 @@ empty), so the app can send the welcome email itself. It is **optional and off u
   marketing and no unsubscribe link, because they asked for the code. The unsubscribe page (`/unsubscribe`, public,
   signed token, no expiry) sets `UNSUBSCRIBED` in Shopify, which stays the single record of consent. GET only asks;
   POST unsubscribes (so link scanners cannot unsubscribe anyone).
-- **Not in the first version** (each needs more access): product and collection sections (`read_products`), image
-  upload (`write_files`; paste an image URL instead), countdowns, GIFs, video.
+- **Product section** (`read_products`): newest products, a collection (sorted best selling / own order / newest) or
+  hand-picked products (picked with Shopify's resource picker). Products are looked up each time an email is sent
+  (`shopify/products.server.ts`), so price, image and availability are current; products not published to the Online
+  Store are dropped. Shopify's product list has no best-selling sort, which is why best sellers means a collection.
+  A failed lookup leaves the section out and never stops the email with the customer's code. Customers who only get
+  their code never see products. The editor canvas shows sample products.
+- **Links use the store's primary domain** (`shopify/store-url.server.ts`), not `*.myshopify.com`: Shopify Email's links
+  do, and `/discount/<code>` on the internal address did not apply the code.
+- **Not built** (each needs more access): image upload (`write_files`; paste an image URL instead), countdowns, GIFs, video.
 
 ## 5. Shopify Flow architecture
 

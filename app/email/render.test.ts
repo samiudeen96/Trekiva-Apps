@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { defaultEmail, newSection, resolveEmailTemplate } from "./defaults";
-import { renderEmail, type EmailVars } from "./render";
+import { renderEmail, sampleProducts, type EmailVars } from "./render";
 import { emailTemplateSchema, type EmailTemplate } from "./schema";
 
 const vars: EmailVars = {
@@ -244,5 +244,112 @@ describe("hiding the code", () => {
   it("always shows the code to someone who is not subscribed", () => {
     const r = renderEmail({ template: hidden(), vars: { ...vars, unsubscribeUrl: null }, mode: "codeOnly" });
     expect(r.html).toContain(">WELCOME10-7KQ2M9XH<");
+  });
+});
+
+describe("product section", () => {
+  const prod = { ...newSection("product"), id: "p1", heading: "More for you", columns: 2, showPrice: true, buttonLabel: "View" } as EmailTemplate["sections"][number];
+  const withProducts = tpl({ sections: [...defaultEmail.sections, prod] });
+  const cards = [
+    { title: "Sandal <1>", url: "https://shop.example/products/1", imageUrl: "https://cdn.example/1.jpg", imageAlt: "One", price: "$10.00" },
+    { title: "Sandal 2", url: "https://shop.example/products/2", imageUrl: "", imageAlt: "", price: "" },
+    { title: "Sandal 3", url: "https://shop.example/products/3", imageUrl: "https://cdn.example/3.jpg", imageAlt: "Three", price: "$30.00" },
+  ];
+
+  it("shows each product with image, name, price and a link, in rows of the chosen columns", () => {
+    const { html } = renderEmail({ template: withProducts, vars: { ...vars, products: { p1: cards } } });
+    expect(html).toContain("More for you");
+    expect(html).toContain('href="https://shop.example/products/1"');
+    expect(html).toContain('src="https://cdn.example/1.jpg"');
+    expect(html).toContain("$10.00");
+    expect(html.match(/<tr><td class="stack"[^>]*valign="top"/g)).toHaveLength(2); // 3 products in 2 columns = 2 rows
+    expect(html).toContain(">View<");
+  });
+
+  it("escapes product names and keeps only https links", () => {
+    const evil = [{ ...cards[0], title: '<img src=x onerror=alert(1)>' }];
+    const { html } = renderEmail({ template: withProducts, vars: { ...vars, products: { p1: evil } } });
+    expect(html).not.toMatch(/<img src=x/);
+    expect(html).toContain("&lt;img src=x");
+  });
+
+  it("leaves the section out when there are no products", () => {
+    for (const products of [undefined, {}, { p1: [] }] as (Record<string, never[]> | undefined)[]) {
+      const { html } = renderEmail({ template: withProducts, vars: { ...vars, products } });
+      expect(html).not.toContain("More for you");
+    }
+  });
+
+  it("hides the price when asked", () => {
+    const t = tpl({ sections: [...defaultEmail.sections, { ...prod, showPrice: false } as EmailTemplate["sections"][number]] });
+    expect(renderEmail({ template: t, vars: { ...vars, products: { p1: cards } } }).html).not.toContain("$10.00");
+  });
+
+  it("lists the products in the plain-text version", () => {
+    const { text } = renderEmail({ template: withProducts, vars: { ...vars, products: { p1: cards } } });
+    expect(text).toContain("Sandal <1> - $10.00\nhttps://shop.example/products/1");
+  });
+
+  it("never shows products to someone who only gets their code", () => {
+    const { html } = renderEmail({ template: withProducts, vars: { ...vars, unsubscribeUrl: null, products: { p1: cards } }, mode: "codeOnly" });
+    expect(html).not.toContain("More for you");
+  });
+
+  it("gives the editor canvas sample products, so the section is never an empty box", () => {
+    const samples = sampleProducts(withProducts);
+    expect(samples.p1).toHaveLength(4);
+    const { html } = renderEmail({ template: withProducts, vars: { ...vars, products: samples }, preview: { selectedId: "p1" } });
+    expect(html).toContain("Sample product 1");
+    expect(html).toMatch(/<tr data-section="p1" data-selected/);
+  });
+
+  it("validates: ids must be Shopify ids and the count is bounded", () => {
+    const ok = (patch: object) => emailTemplateSchema.safeParse(tpl({ sections: [...defaultEmail.sections, { ...prod, ...patch }] })).success;
+    expect(ok({})).toBe(true);
+    expect(ok({ productIds: ["gid://shopify/Product/1"], productTitles: ["A"] })).toBe(true);
+    expect(ok({ productIds: ["not-an-id"] })).toBe(false);
+    expect(ok({ collectionId: "gid://shopify/Product/1" })).toBe(false);
+    expect(ok({ count: 9 })).toBe(false);
+    expect(ok({ columns: 4 })).toBe(false);
+  });
+});
+
+describe("section background and spacing", () => {
+  const sec = (patch: object) =>
+    tpl({ sections: [{ ...defaultEmail.sections[1], ...patch } as EmailTemplate["sections"][number], defaultEmail.sections[2]] });
+
+  it("gives a section its own background", () => {
+    const { html } = renderEmail({ template: sec({ bg: "#ffe9c7" }), vars });
+    expect(html).toMatch(/<td class="px" bgcolor="#ffe9c7" style="padding:[^"]*background:#ffe9c7;">/);
+  });
+
+  it("overrides only the vertical padding and keeps the sides", () => {
+    const { html } = renderEmail({ template: sec({ padY: 40 }), vars });
+    expect(html).toContain('style="padding:40px 32px;"');
+  });
+
+  it("applies both together", () => {
+    expect(renderEmail({ template: sec({ bg: "#112233", padY: 0 }), vars }).html).toContain('bgcolor="#112233" style="padding:0px 32px;background:#112233;"');
+  });
+
+  it("changes nothing when neither is set", () => {
+    const plain = renderEmail({ template: sec({}), vars }).html;
+    expect(plain).toContain('<td class="px" style="padding:20px 32px 8px;">');
+    expect(renderEmail({ template: sec({ bg: "", padY: null }), vars }).html).toBe(plain);
+  });
+
+  it("validates: a real color and a bounded spacing", () => {
+    const ok = (patch: object) => emailTemplateSchema.safeParse(sec(patch)).success;
+    expect(ok({ bg: "#aabbcc", padY: 80 })).toBe(true);
+    expect(ok({ bg: "", padY: null })).toBe(true);
+    expect(ok({ bg: "red" })).toBe(false);
+    expect(ok({ bg: '#fff"onload="x' })).toBe(false);
+    expect(ok({ padY: 81 })).toBe(false);
+    expect(ok({ padY: -1 })).toBe(false);
+  });
+
+  it("also reaches product and discount rows", () => {
+    const t = tpl({ sections: [{ ...defaultEmail.sections[2], bg: "#abcdef" } as EmailTemplate["sections"][number]] });
+    expect(renderEmail({ template: t, vars }).html).toContain('bgcolor="#abcdef"');
   });
 });

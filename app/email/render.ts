@@ -4,7 +4,20 @@ import { renderRich, stripRich } from "./richtext";
 
 // Pure (no server imports): used by the sender, the test-email action and the editor's preview.
 
+export interface ProductCard {
+  title: string;
+  /** https url of the product page on the store. */
+  url: string;
+  /** https image url, or "" when the product has none. */
+  imageUrl: string;
+  imageAlt: string;
+  /** Already formatted, e.g. "₹999.00"; "" to hide. */
+  price: string;
+}
+
 export interface EmailVars {
+  /** Looked up per product section when the email is sent (see shopify/products.server). */
+  products?: Record<string, ProductCard[]>;
   code: string;
   /** https://<shop>/discount/<CODE>: applies the code, then lands on the home page. */
   discountBase: string;
@@ -75,7 +88,25 @@ function row(inner: string, padding = "8px 32px"): string {
   return `<tr><td class="px" style="padding:${padding};">${inner}</td></tr>`;
 }
 
+/** Applies a section's own background and vertical padding to the row it rendered. */
+function applyLook(html: string, s: EmailSection): string {
+  if (!("bg" in s || "padY" in s)) return html;
+  const bg = "bg" in s && s.bg ? s.bg : "";
+  const padY = "padY" in s && s.padY != null ? s.padY : null;
+  if (!bg && padY === null) return html;
+  return html.replace(/^<tr><td class="px" style="padding:([^;]*);">/, (_m, pad: string) => {
+    const parts = pad.split(" ");
+    const x = parts[1] ?? parts[0];
+    const padding = padY !== null ? `${padY}px ${x}` : pad;
+    return `<tr><td class="px" ${bg ? `bgcolor="${bg}" ` : ""}style="padding:${padding};${bg ? `background:${bg};` : ""}">`;
+  });
+}
+
 function renderSection(s: EmailSection, t: EmailTemplate, v: EmailVars): string {
+  return applyLook(renderSectionBody(s, t, v), s);
+}
+
+function renderSectionBody(s: EmailSection, t: EmailTemplate, v: EmailVars): string {
   const c = t.brand.textColor;
   const body = `margin:0 0 14px;font-size:16px;line-height:1.6;color:${c};`;
   switch (s.type) {
@@ -121,6 +152,29 @@ function renderSection(s: EmailSection, t: EmailTemplate, v: EmailVars): string 
     case "button": {
       const href = resolveUrl(s.url, v, v.discountBase);
       return href ? row(button(s.label, href, t, s.align)) : "";
+    }
+    case "product": {
+      const items = v.products?.[s.id] ?? [];
+      if (items.length === 0) return "";
+      const cols = Math.min(s.columns, items.length);
+      const w = Math.floor(100 / cols);
+      const cells = items.map((p) => {
+        const img = p.imageUrl
+          ? `<img src="${esc(p.imageUrl)}" alt="${esc(p.imageAlt)}" width="${Math.floor(t.brand.width / cols) - 40}" style="display:block;width:100%;height:auto;border:0;border-radius:6px;">`
+          : `<div style="height:140px;background:#e9e9e6;border-radius:6px;"></div>`;
+        const price = s.showPrice && p.price ? `<p style="margin:0 0 10px;font-size:14px;color:${c};opacity:.8;">${esc(p.price)}</p>` : "";
+        const cta = s.buttonLabel ? button(s.buttonLabel, p.url, t, "center") : "";
+        return `<td class="stack" valign="top" style="width:${w}%;padding:8px 10px;text-align:center;"><a href="${esc(p.url)}" style="text-decoration:none;color:${c};">${img}<p style="margin:10px 0 4px;font-size:15px;font-weight:600;line-height:1.35;color:${c};">${esc(p.title)}</p></a>${price}${cta}</td>`;
+      });
+      // Rows of `cols` cards, padded so the last row's cards keep the same width.
+      const rows: string[] = [];
+      for (let i = 0; i < cells.length; i += cols) {
+        const chunk = cells.slice(i, i + cols);
+        while (chunk.length < cols) chunk.push(`<td class="stack" style="width:${w}%;"></td>`);
+        rows.push(`<tr>${chunk.join("")}</tr>`);
+      }
+      const h = s.heading ? `<h2 style="margin:0 0 12px;font-size:22px;line-height:1.3;color:${c};text-align:center;">${fill(s.heading, v)}</h2>` : "";
+      return row(`${h}<table role="presentation" width="100%" cellpadding="0" cellspacing="0">${rows.join("")}</table>`, "16px 22px");
     }
     case "columns": {
       const w = Math.floor(100 / s.items.length);
@@ -169,8 +223,26 @@ function previewScript(scrollY: number): string {
   return `<script>(function(){window.scrollTo(0,${Math.max(0, Math.floor(scrollY))});document.addEventListener("click",function(e){e.preventDefault();var t=e.target.closest&&e.target.closest("[data-section]");parent.postMessage({trekivaSection:t?t.getAttribute("data-section"):null},"*")},true);var q;window.addEventListener("scroll",function(){clearTimeout(q);q=setTimeout(function(){parent.postMessage({trekivaScroll:window.scrollY},"*")},80)})})();</script>`;
 }
 
+/** What the editor canvas shows for a product section: the real products only exist when an email is sent. */
+export function sampleProducts(t: EmailTemplate): Record<string, ProductCard[]> {
+  const out: Record<string, ProductCard[]> = {};
+  for (const s of t.sections) {
+    if (s.type !== "product") continue;
+    const n = s.source === "static" ? Math.max(s.productIds.length, 1) : s.count;
+    out[s.id] = Array.from({ length: n }, (_, i) => ({
+      title: s.source === "static" && s.productTitles[i] ? s.productTitles[i] : `Sample product ${i + 1}`,
+      url: "https://example.com/products/sample",
+      imageUrl: "",
+      imageAlt: "",
+      price: "$49.00",
+    }));
+  }
+  return out;
+}
+
 function placeholder(s: EmailSection): string {
-  const what = s.type === "image" ? "Image: add an image URL" : s.type === "button" ? "Button: add a valid link" : "Empty section";
+  const what =
+    s.type === "image" ? "Image: add an image URL" : s.type === "button" ? "Button: add a valid link" : s.type === "product" ? "Products: choose what to show" : "Empty section";
   return `<tr><td style="padding:28px 16px;text-align:center;font-size:14px;color:#8a8a8a;border:1px dashed #c9c9c9;">${what}</td></tr>`;
 }
 
@@ -258,6 +330,17 @@ function renderText(sections: EmailSection[], t: EmailTemplate, v: EmailVars): s
       case "columns":
         parts.push(s.items.map((i) => `${fillPlain(i.title, v)}: ${fillPlain(i.text, v)}`).join("\n"));
         break;
+      case "product": {
+        const items = v.products?.[s.id] ?? [];
+        if (items.length) {
+          parts.push(
+            [s.heading && fillPlain(s.heading, v), ...items.map((p) => `${p.title}${s.showPrice && p.price ? ` - ${p.price}` : ""}\n${p.url}`)]
+              .filter(Boolean)
+              .join("\n\n"),
+          );
+        }
+        break;
+      }
       case "image":
         break;
     }

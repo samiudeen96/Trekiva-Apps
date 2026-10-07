@@ -7,6 +7,7 @@ import { createCustomerGateway } from "../shopify/customers.server";
 import { createDiscountCodeGateway } from "../discounts/redeem-codes.server";
 import { createEmailGateway, emailConfig } from "../email/email.server";
 import { createStoreUrlResolver } from "../shopify/store-url.server";
+import { createProductResolver } from "../shopify/products.server";
 import { allowClaimAttempt, clientIp } from "../utils/rate-limit.server";
 import { logger } from "../utils/logger.server";
 
@@ -39,7 +40,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
   const claimService = new ClaimService(
     createCustomerGateway(admin),
     createDiscountCodeGateway(admin),
-    mail ? createEmailGateway(mail, fetch, createStoreUrlResolver(admin)) : undefined,
+    mail ? createEmailGateway(mail, fetch, createStoreUrlResolver(admin), createProductResolver(admin)) : undefined,
   );
   try {
     const outcome = await claimService.claim({

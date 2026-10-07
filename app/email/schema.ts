@@ -25,6 +25,14 @@ const linkUrl = z
     "Use an https URL, {{discount_link}} or {{shop_url}}",
   );
 
+/** Layout every body section can have, as in Messaging: its own background and vertical spacing. */
+const look = {
+  /** "" or absent = the email's content background. */
+  bg: z.union([hex, z.literal("")]).optional(),
+  /** Top and bottom padding in px; null or absent = automatic. */
+  padY: z.number().int().min(0).max(80).nullable().optional(),
+};
+
 const header = z.object({
   type: z.literal("header"),
   id: sectionId,
@@ -34,6 +42,7 @@ const header = z.object({
   backgroundColor: hex,
 });
 const textBlock = z.object({
+  ...look,
   type: z.literal("text"),
   id: sectionId,
   heading: text(120),
@@ -48,6 +57,7 @@ const image = z.object({
   linkUrl,
 });
 const imageText = z.object({
+  ...look,
   type: z.literal("imageText"),
   id: sectionId,
   imageUrl: httpsUrl,
@@ -59,6 +69,7 @@ const imageText = z.object({
   imagePosition: z.enum(["left", "right"]),
 });
 const discount = z.object({
+  ...look,
   type: z.literal("discount"),
   id: sectionId,
   /** false hides the code box; the button still applies the code through the discount link. */
@@ -75,6 +86,7 @@ const discount = z.object({
     .refine((v) => v === "" || (v.startsWith("/") && !v.startsWith("//")), "Start with a single /"),
 });
 const button = z.object({
+  ...look,
   type: z.literal("button"),
   id: sectionId,
   label: text(40).min(1),
@@ -82,12 +94,35 @@ const button = z.object({
   align,
 });
 const columns = z.object({
+  ...look,
   type: z.literal("columns"),
   id: sectionId,
   items: z.array(z.object({ title: text(60), text: text(200) })).min(2).max(3),
 });
 
-export const sectionSchema = z.discriminatedUnion("type", [header, textBlock, image, imageText, discount, button, columns]);
+const gid = (kind: string) => z.string().regex(new RegExp(`^gid://shopify/${kind}/\\d+$`), `Not a Shopify ${kind} id`);
+
+/** Products are looked up when each email is sent, so the email always shows what is in stock and priced today. */
+const product = z.object({
+  ...look,
+  type: z.literal("product"),
+  id: sectionId,
+  heading: text(120),
+  /** newest = latest products; collection = products of one collection; static = hand-picked products. */
+  source: z.enum(["newest", "collection", "static"]),
+  collectionId: gid("Collection").nullable(),
+  collectionTitle: text(120),
+  collectionSort: z.enum(["best_selling", "manual", "newest"]),
+  productIds: z.array(gid("Product")).max(8),
+  /** Names of the picked products, for the editor only (the email always uses the live title). */
+  productTitles: z.array(text(120)).max(8),
+  count: z.coerce.number().int().min(1).max(8),
+  columns: z.union([z.literal(1), z.literal(2), z.literal(3)]),
+  showPrice: z.boolean(),
+  buttonLabel: text(40),
+});
+
+export const sectionSchema = z.discriminatedUnion("type", [header, textBlock, image, imageText, discount, button, columns, product]);
 
 export const emailTemplateSchema = z.object({
   schemaVersion: z.literal(1),
