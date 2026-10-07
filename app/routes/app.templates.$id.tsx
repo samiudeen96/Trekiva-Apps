@@ -8,6 +8,7 @@ import { emailTemplateRepository } from "../repositories/email-template.reposito
 import { resolveEmailTemplate } from "../email/defaults";
 import { parseTemplateForm } from "../email/template-form";
 import { createEmailGateway, emailConfig, senderName } from "../email/email.server";
+import { createStoreUrlResolver } from "../shopify/store-url.server";
 import { TemplateEditor } from "../components/TemplateEditor";
 import { logger } from "../utils/logger.server";
 
@@ -32,7 +33,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
 type ActionResult = { saved: boolean; error: string | null; test: { ok: boolean; message: string } | null };
 
 export const action = async ({ request, params }: ActionFunctionArgs): Promise<ActionResult> => {
-  const { session } = await authenticate.admin(request);
+  const { session, admin } = await authenticate.admin(request);
   const fd = await request.formData();
   const parsed = parseTemplateForm(fd);
 
@@ -44,7 +45,7 @@ export const action = async ({ request, params }: ActionFunctionArgs): Promise<A
     if (!to.success) return fail("Enter a valid email address.");
     if (!parsed.ok) return fail(parsed.error);
     try {
-      await createEmailGateway(mail).sendTest({ to: to.data, shopDomain: session.shop, template: parsed.template });
+      await createEmailGateway(mail, fetch, createStoreUrlResolver(admin)).sendTest({ to: to.data, shopDomain: session.shop, template: parsed.template });
       return { saved: false, error: null, test: { ok: true, message: `Test sent to ${to.data} with a sample code.` } };
     } catch (err) {
       logger.error({ err, shop: session.shop }, "test email failed");

@@ -13,6 +13,7 @@ import {
 import { TAG_CLAIMED, TAG_EMAIL_SENT } from "../claims/handoff";
 import { ensureMetafieldDefinitions } from "../shopify/handoff.server";
 import { createEmailGateway, emailConfig } from "../email/email.server";
+import { createStoreUrlResolver } from "../shopify/store-url.server";
 import { claimRepository } from "../repositories/claim.repository";
 import { campaignRepository } from "../repositories/campaign.repository";
 import { getCodeDiscount } from "../discounts/discounts.server";
@@ -128,7 +129,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const service = new ClaimService(
     createCustomerGateway(admin),
     createDiscountCodeGateway(admin),
-    mail ? createEmailGateway(mail) : undefined,
+    mail ? createEmailGateway(mail, fetch, createStoreUrlResolver(admin)) : undefined,
   );
   const retry = await retryClaims(rows, ({ campaignId, email }) =>
     service.claim({ shopDomain: session.shop, campaignId, email }),

@@ -34,9 +34,14 @@ export function senderName(from: string): string | undefined {
   return name || undefined;
 }
 
-export function discountBase(shopDomain: string, code: string): string {
-  return `https://${shopDomain}/discount/${encodeURIComponent(code)}`;
+/** `storeUrl` is the address customers shop on, e.g. https://trekiva.com (no trailing slash). */
+export function discountBase(storeUrl: string, code: string): string {
+  return `${storeUrl}/discount/${encodeURIComponent(code)}`;
 }
+
+/** Resolves a shop's customer-facing address. The default is the internal myshopify address. */
+export type StoreUrlResolver = (shopDomain: string) => Promise<string>;
+const internalAddress: StoreUrlResolver = async (shopDomain) => `https://${shopDomain}`;
 
 export interface TestEmailInput {
   to: string;
@@ -48,7 +53,11 @@ export interface AppEmailGateway extends EmailGateway {
   sendTest(input: TestEmailInput): Promise<void>;
 }
 
-export function createEmailGateway(cfg: EmailConfig, fetchImpl: typeof fetch = fetch): AppEmailGateway {
+export function createEmailGateway(
+  cfg: EmailConfig,
+  fetchImpl: typeof fetch = fetch,
+  storeUrlFor: StoreUrlResolver = internalAddress,
+): AppEmailGateway {
   const shopName = (shopDomain: string) => senderName(cfg.from) ?? shopDomain;
 
   async function deliver(msg: {
@@ -90,11 +99,12 @@ export function createEmailGateway(cfg: EmailConfig, fetchImpl: typeof fetch = f
       const unsubscribeUrl = subscribed
         ? `${cfg.appUrl}/unsubscribe?t=${signUnsubscribe({ shop: input.shopDomain, customerId: input.customerId }, cfg.secret)}`
         : null;
+      const storeUrl = await storeUrlFor(input.shopDomain);
       const vars: EmailVars = {
         code: input.discountCode,
-        discountBase: discountBase(input.shopDomain, input.discountCode),
+        discountBase: discountBase(storeUrl, input.discountCode),
         shopName: shopName(input.shopDomain),
-        shopUrl: `https://${input.shopDomain}/`,
+        shopUrl: `${storeUrl}/`,
         firstName: input.firstName,
         unsubscribeUrl,
       };
@@ -115,13 +125,14 @@ export function createEmailGateway(cfg: EmailConfig, fetchImpl: typeof fetch = f
     /** The merchant's unsaved template, with a sample code. Never touches a real claim. */
     async sendTest({ to, shopDomain, template }) {
       const sample = "WELCOME10-7KQ2M9XH";
+      const storeUrl = await storeUrlFor(shopDomain);
       const { subject, html, text } = renderEmail({
         template,
         vars: {
           code: sample,
-          discountBase: discountBase(shopDomain, sample),
+          discountBase: discountBase(storeUrl, sample),
           shopName: shopName(shopDomain),
-          shopUrl: `https://${shopDomain}/`,
+          shopUrl: `${storeUrl}/`,
           firstName: null,
           unsubscribeUrl: "#",
         },

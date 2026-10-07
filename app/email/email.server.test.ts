@@ -38,7 +38,7 @@ describe("Resend gateway: welcome email", () => {
     expect(p).toMatchObject({ from: cfg.from, to: ["a@b.co"], reply_to: "help@trekiva.com" });
     expect(p.subject).toBe("Your welcome offer from Trekiva");
     expect(p.html).toContain("WELCOME10-7KQ2M9XH");
-    expect(p.html).toContain(discountBase("shop-one.myshopify.com", "WELCOME10-7KQ2M9XH"));
+    expect(p.html).toContain(discountBase("https://shop-one.myshopify.com", "WELCOME10-7KQ2M9XH"));
     expect(p.html).toContain("Hi Asha,");
     expect(p.text).toContain("WELCOME10-7KQ2M9XH");
   });
@@ -87,6 +87,25 @@ describe("Resend gateway: welcome email", () => {
     const { fetchImpl, calls } = resend();
     await createEmailGateway({ ...cfg, from: "care@trekiva.com" }, fetchImpl).sendWelcomeOffer(base);
     expect(payload(calls).subject).toBe("Your welcome offer from shop-one.myshopify.com");
+  });
+});
+
+describe("Resend gateway: links use the store's own domain", () => {
+  it("builds the discount and store links on the domain customers shop on", async () => {
+    const { fetchImpl, calls } = resend();
+    await createEmailGateway(cfg, fetchImpl, async () => "https://trekiva.com").sendWelcomeOffer(base);
+    const p = payload(calls);
+    expect(p.html).toContain('href="https://trekiva.com/discount/WELCOME10-7KQ2M9XH"');
+    expect(p.html).not.toContain("myshopify.com");
+    expect(p.text).toContain("https://trekiva.com/discount/WELCOME10-7KQ2M9XH");
+  });
+
+  it("does so for the test email too", async () => {
+    const { fetchImpl, calls } = resend();
+    await createEmailGateway(cfg, fetchImpl, async () => "https://trekiva.com").sendTest({
+      to: "me@x.co", shopDomain: base.shopDomain, template: defaultEmail,
+    });
+    expect(payload(calls).html).toContain("https://trekiva.com/discount/");
   });
 });
 
