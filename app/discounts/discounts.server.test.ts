@@ -47,7 +47,9 @@ describe("toDiscountSummary", () => {
     expect(note).toBeDefined();
     // The old copy implied this capped the whole discount; it must say the opposite.
     expect(note).toMatch(/each code/i);
-    expect(note).toMatch(/does not cap/i);
+    // Must quote Shopify's current checkbox label, which says "each code" itself.
+    expect(note).toMatch(/each code can be used in total/i);
+    expect(note).toMatch(/(does not|never) caps?/i);
     expect(note).toMatch(/unlimited/i);
   });
 
@@ -75,6 +77,40 @@ describe("toDiscountSummary", () => {
         /not a percentage/i,
       ),
     ).toHaveLength(1);
+  });
+
+  it("treats a customer segment as a deliberate setup, naming it instead of warning", () => {
+    const segmented = summary({
+      context: {
+        __typename: "DiscountCustomerSegments",
+        segments: [{ id: "gid://shopify/Segment/1", name: "Customers who haven't purchased" }],
+      },
+    });
+    expect(segmented.eligibility).toBe("Customer segments");
+    expect(segmented.segmentNames).toEqual(["Customers who haven't purchased"]);
+    // It is a valid configuration, so it must not be reported as a problem.
+    expect(matching(segmented.warnings, /segment/i)).toHaveLength(0);
+    const note = matching(segmented.notes, /segment/i)[0];
+    expect(note).toContain("Customers who haven't purchased");
+    // The real catch: Shopify only enforces a segment at checkout.
+    expect(note).toMatch(/checkout/i);
+    expect(note).toMatch(/first-time customers only/i);
+  });
+
+  it("still names the segment when there are several, and none otherwise", () => {
+    const two = summary({
+      context: {
+        __typename: "DiscountCustomerSegments",
+        segments: [{ id: "1", name: "No orders" }, { id: "2", name: "Newsletter" }],
+      },
+    });
+    expect(two.segmentNames).toEqual(["No orders", "Newsletter"]);
+    expect(matching(two.notes, /segments "No orders", "Newsletter"/)).toHaveLength(1);
+    expect(summary().segmentNames).toEqual([]);
+  });
+
+  it("does not silently label an unknown eligibility context as All customers", () => {
+    expect(summary({ context: { __typename: "DiscountContextUnknown" } }).eligibility).toMatch(/unknown/i);
   });
 
   it("ignores discounts it cannot support", () => {

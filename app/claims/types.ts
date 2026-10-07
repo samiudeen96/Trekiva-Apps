@@ -1,7 +1,7 @@
 /** Which fulfilment step a failed claim stopped at. */
 export type ClaimFailureStep = "customer" | "discount" | "flow";
 
-export type ClaimStatus = "claimed" | "already_claimed";
+export type ClaimStatus = "claimed" | "already_claimed" | "not_eligible";
 
 export interface ClaimOutcome {
   status: ClaimStatus;
@@ -22,6 +22,14 @@ export interface FulfilmentInput {
   claimedAt: Date;
 }
 
+/** What the first-purchase gate needs to know about an email that already exists in Shopify. */
+export interface ExistingCustomer {
+  /** Customer GID */
+  id: string;
+  /** True when the customer has completed at least one order in their lifetime. */
+  hasOrders: boolean;
+}
+
 export interface CustomerRecord {
   /** Customer GID */
   id: string;
@@ -35,6 +43,11 @@ export interface CustomerGateway {
    * marketing state are subscribed (the popup submission is the opt-in); others are left as is.
    */
   findOrCreate(input: { email: string }): Promise<CustomerRecord>;
+  /**
+   * Read-only lookup for the first-purchase gate. Null when no Shopify customer exists for
+   * this email yet, which is itself proof the address has never ordered.
+   */
+  findExisting(input: { email: string }): Promise<ExistingCustomer | null>;
   /** Best-effort mirror into trekiva.* customer metafields. Must not throw. */
   writeClaimMetafields(input: {
     customerId: string;

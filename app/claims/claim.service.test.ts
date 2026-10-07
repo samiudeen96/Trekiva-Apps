@@ -26,7 +26,10 @@ let campaignId: string;
 
 const content = {
   successMessage: "Your 10% welcome offer is on its way! Check your inbox for your discount code.",
-  alreadyClaimedMessage: "You’ve already claimed this welcome offer.",
+  alreadyClaimedMessage:
+    "You’ve already claimed your welcome offer. Please check your previous email for your discount code.",
+  notEligibleMessage:
+    "This welcome offer is for first-time customers only, so it can’t be applied to your account.",
 };
 
 function build(
@@ -34,24 +37,31 @@ function build(
     flow?: FlowGateway["triggerWelcomeOfferClaimed"];
     issueCode?: DiscountCodeGateway["issueCode"];
     subscribed?: boolean;
+    /** What the first-purchase gate sees; undefined = no Shopify customer for this email yet. */
+    existing?: { id: string; hasOrders: boolean };
   } = {},
 ) {
   const findOrCreate = vi.fn<CustomerGateway["findOrCreate"]>(async () => ({
     id: "gid://shopify/Customer/1",
     subscribed: overrides.subscribed ?? true,
   }));
+  const findExisting = vi.fn<CustomerGateway["findExisting"]>(async () => overrides.existing ?? null);
   const issueCode = vi.fn<DiscountCodeGateway["issueCode"]>(overrides.issueCode ?? (async () => undefined));
   const trigger = vi.fn<FlowGateway["triggerWelcomeOfferClaimed"]>(
     overrides.flow ?? (async () => undefined),
   );
   const writeClaimMetafields = vi.fn<CustomerGateway["writeClaimMetafields"]>(async () => undefined);
   const service = new ClaimService(
-    { findOrCreate, writeClaimMetafields },
+    { findOrCreate, findExisting, writeClaimMetafields },
     { triggerWelcomeOfferClaimed: trigger },
     { issueCode },
   );
-  return { service, findOrCreate, trigger, writeClaimMetafields, issueCode };
+  return { service, findOrCreate, findExisting, trigger, writeClaimMetafields, issueCode };
 }
+
+/** Turns the first-purchase gate on for the campaign under test. */
+const requireFirstPurchase = () =>
+  db.campaign.update({ where: { id: campaignId }, data: { rules: { firstPurchaseOnly: true } } });
 
 beforeEach(async () => {
   forced.codes = [];
@@ -282,13 +292,97 @@ describe("ClaimService", () => {
     await db.campaign.deleteMany({ where: { shopDomain: otherShop } });
   });
 
-  it("a returning customer can claim: first-purchase eligibility is deliberately not enforced", async () => {
-    // The app's only gate is one claim per email. It never reads order history, so a customer
-    // with previous orders is accepted. Restrict the discount in Shopify if that is not wanted.
-    const { service, findOrCreate } = build();
-    findOrCreate.mockResolvedValueOnce({ id: "gid://shopify/Customer/99", subscribed: true });
+  it("a returning customer can claim while first-purchase eligibility is off", async () => {
+    // Default rules: the only gate is one claim per email, so order history is never read.
+    const { service, findExisting } = build({ existing: { id: "gid://shopify/Customer/99", hasOrders: true } });
     const out = await service.claim({ shopDomain: shop, campaignId, email: "regular@example.com" });
     expect(out.status).toBe("claimed");
+    expect(findExisting).not.toHaveBeenCalled();
+  });
+
+  describe("first-purchase eligibility", () => {
+    it("refuses a customer who already has an order, issuing nothing", async () => {
+      await requireFirstPurchase();
+      const { service, trigger, findOrCreate, issueCode } = build({
+        existing: { id: "gid://shopify/Customer/99", hasOrders: true },
+      });
+      const out = await service.claim({ shopDomain: shop, campaignId, email: "regular@example.com" });
+      expect(out).toEqual({
+        status: "not_eligible",
+        message: content.notEligibleMessage,
+      });
+      // No claim row, no code and no email: the offer was never issued.
+      expect(await db.welcomeOfferClaim.count({ where: { shopDomain: shop } })).toBe(0);
+      expect(findOrCreate).not.toHaveBeenCalled();
+      expect(issueCode).not.toHaveBeenCalled();
+      expect(trigger).not.toHaveBeenCalled();
+    });
+
+    it("lets an existing customer with no orders claim", async () => {
+      await requireFirstPurchase();
+      const { service, trigger } = build({ existing: { id: "gid://shopify/Customer/5", hasOrders: false } });
+      const out = await service.claim({ shopDomain: shop, campaignId, email: "browser@example.com" });
+      expect(out.status).toBe("claimed");
+      expect(trigger).toHaveBeenCalledTimes(1);
+    });
+
+    it("lets a brand new email claim when Shopify has no customer for it", async () => {
+      await requireFirstPurchase();
+      const { service, findExisting } = build();
+      const out = await service.claim({ shopDomain: shop, campaignId, email: "brand@new.com" });
+      expect(out.status).toBe("claimed");
+      expect(findExisting).toHaveBeenCalledWith({ email: "brand@new.com" });
+    });
+
+    it("refuses an ineligible email no matter the casing or padding", async () => {
+      await requireFirstPurchase();
+      const { service } = build({ existing: { id: "gid://shopify/Customer/99", hasOrders: true } });
+      for (const email of ["Regular@Example.com", " REGULAR@EXAMPLE.COM "]) {
+        expect((await service.claim({ shopDomain: shop, campaignId, email })).status).toBe("not_eligible");
+      }
+      expect(await db.welcomeOfferClaim.count({ where: { shopDomain: shop } })).toBe(0);
+    });
+
+    it("gives every concurrent submission from an ineligible email the same answer", async () => {
+      await requireFirstPurchase();
+      const { service, trigger } = build({ existing: { id: "gid://shopify/Customer/99", hasOrders: true } });
+      const results = await Promise.all(
+        Array.from({ length: 10 }, () =>
+          service.claim({ shopDomain: shop, campaignId, email: "race-regular@example.com" }),
+        ),
+      );
+      expect(results.every((r) => r.status === "not_eligible")).toBe(true);
+      expect(trigger).not.toHaveBeenCalled();
+      expect(await db.welcomeOfferClaim.count({ where: { shopDomain: shop } })).toBe(0);
+    });
+
+    it("does not revoke an existing claim when the customer orders before a retry", async () => {
+      await requireFirstPurchase();
+      let fail = true;
+      const { service, findExisting } = build({
+        flow: async () => {
+          if (fail) throw new Error("flow down");
+        },
+      });
+      await expect(
+        service.claim({ shopDomain: shop, campaignId, email: "ordered@example.com" }),
+      ).rejects.toThrow();
+
+      // The customer completes an order between the failed attempt and the retry.
+      findExisting.mockResolvedValue({ id: "gid://shopify/Customer/7", hasOrders: true });
+      fail = false;
+      const out = await service.claim({ shopDomain: shop, campaignId, email: "ordered@example.com" });
+      expect(out.status).toBe("claimed");
+    });
+
+    it("treats an unreadable order count as ineligible rather than letting it through", async () => {
+      await requireFirstPurchase();
+      // findExisting maps a non-numeric numberOfOrders to hasOrders: true (see customers.server).
+      const { service } = build({ existing: { id: "gid://shopify/Customer/99", hasOrders: true } });
+      expect(
+        (await service.claim({ shopDomain: shop, campaignId, email: "unknown@example.com" })).status,
+      ).toBe("not_eligible");
+    });
   });
 
   it("does not claim across shops", async () => {

@@ -28,7 +28,12 @@ const DISCOUNT_FIELDS = `#graphql
         }
         ... on DiscountMinimumQuantity { greaterThanOrEqualToQuantity }
       }
-      context { __typename }
+      context {
+        __typename
+        ... on DiscountCustomerSegments {
+          segments { id name }
+        }
+      }
     }
   }
 `;
@@ -55,6 +60,7 @@ const ELIGIBILITY: Record<string, string> = {
   DiscountCustomers: "Specific customers",
   DiscountCustomerSegments: "Customer segments",
   DiscountMarkets: "Specific markets",
+  DiscountContextUnknown: "Unknown (not supported by this API version)",
 };
 
 /** Maps a discountNode to a summary; null for non-basic (unsupported) discounts. */
@@ -81,14 +87,16 @@ export function toDiscountSummary(node: any): DiscountSummary | null {
         : "None";
 
   const eligibility = ELIGIBILITY[d.context?.__typename] ?? "All customers";
+  const segmentNames: string[] = (d.context?.segments ?? []).map((seg: any) => seg.name).filter(Boolean);
   const warnings: string[] = [];
   const notes: string[] = [];
-  // Shopify applies usageLimit to EACH redeem code, not across the discount, so 1 makes every
-  // per-claim code single-use while the number of claims stays unlimited. This is a
-  // recommendation, not a requirement: the app issues one code per email either way.
+  // Shopify applies usageLimit to EACH redeem code, not across the discount (confirmed by
+  // Shopify staff), so 1 makes every per-claim code single-use while the number of claims
+  // stays unlimited. A recommendation, not a requirement: the app issues one code per email
+  // either way, but without it a forwarded code keeps working for everyone who receives it.
   if (d.usageLimit !== 1)
     notes.push(
-      "Recommended: set \"Limit number of times this discount can be used in total\" to 1. Shopify applies that limit to each code separately, so it does not cap your campaign - the app adds a new code for every claim, and the number of claims stays unlimited. Left unlimited, any single code still works after it is used, so a forwarded code can be redeemed by other customers.",
+      "Recommended: tick \"Limit number of times each code can be used in total\" and set it to 1. As that label says, Shopify applies the limit to each code separately, so it caps each claim's own code at one redemption and never caps your campaign - the app adds a new code for every claim, so claims stay unlimited. Left unticked, a code still works after it has been redeemed, so one forwarded code can be used by any number of customers.",
     );
   // The app issues one code per email, so this is what stops that customer reusing their own code.
   if (!d.appliesOncePerCustomer)
@@ -99,10 +107,14 @@ export function toDiscountSummary(node: any): DiscountSummary | null {
     warnings.push(
       "This discount is limited to specific customers, so new sign-ups cannot use it. Set eligibility to All customers.",
     );
-  // A segment can include new sign-ups (e.g. "no orders yet"), so this is only a prompt to check.
+  // A segment such as "Customers who haven't purchased" is the right way to restrict a welcome
+  // offer, so this is information, not a problem. The catch worth stating: Shopify only applies
+  // it at checkout, so an ineligible customer can still claim a code and be refused later.
   if (d.context?.__typename === "DiscountCustomerSegments")
-    warnings.push(
-      "This discount is limited to customer segments. Check that the segments include new sign-ups, or set eligibility to All customers.",
+    notes.push(
+      `Eligibility is limited to the customer segment${segmentNames.length === 1 ? "" : "s"} ${
+        segmentNames.length ? segmentNames.map((n) => `"${n}"`).join(", ") : "selected on this discount"
+      }. Shopify only checks this at checkout, so a customer outside the segment can still claim a code here and is refused only when they try to use it. Turn on "First-time customers only" in Display rules to refuse them up front instead.`,
     );
   if (!isPercentage)
     warnings.push("This is not a percentage discount; copy that mentions a percentage may be wrong.");
@@ -122,6 +134,7 @@ export function toDiscountSummary(node: any): DiscountSummary | null {
     minimumRequirement,
     usageLimit: d.usageLimit ?? null,
     eligibility,
+    segmentNames,
     warnings,
     notes,
   };

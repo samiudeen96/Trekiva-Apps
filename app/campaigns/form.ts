@@ -46,6 +46,7 @@ export function parseCampaignForm(fd: FormData): ParseResult {
       .split("\n")
       .map((l) => l.trim())
       .filter(Boolean),
+    firstPurchaseOnly: fd.get("rules.firstPurchaseOnly") === "on",
   });
 
   if (!details.success) collect("details", details.error.issues);

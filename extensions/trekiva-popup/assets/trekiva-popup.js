@@ -127,7 +127,7 @@
           return res.json().catch(function () { return {}; }).then(function (body) { return { ok: res.ok, body: body }; });
         })
         .then(function (r) {
-          if (r.ok && (r.body.status === "claimed" || r.body.status === "already_claimed")) {
+          if (r.ok && (r.body.status === "claimed" || r.body.status === "already_claimed" || r.body.status === "not_eligible")) {
             onResult(r.body.status, r.body.message);
           } else {
             throw new Error(r.body && r.body.message ? r.body.message : "error");
@@ -146,13 +146,23 @@
 
   function resultView(c, status, message) {
     var wrap = el("div", "tkv-state");
-    var isNew = status === "claimed";
+    // Campaigns saved before these fields existed fall back to the already-claimed copy.
+    var titles = {
+      claimed: c.content.successTitle,
+      already_claimed: c.content.alreadyClaimedTitle,
+      not_eligible: c.content.notEligibleTitle || c.content.alreadyClaimedTitle
+    };
+    var messages = {
+      claimed: c.content.successMessage,
+      already_claimed: c.content.alreadyClaimedMessage,
+      not_eligible: c.content.notEligibleMessage || c.content.alreadyClaimedMessage
+    };
     wrap.appendChild(el("span", "tkv-badge")).setAttribute("aria-hidden", "true");
-    var h = el("h2", "tkv-title", isNew ? c.content.successTitle : c.content.alreadyClaimedTitle);
+    var h = el("h2", "tkv-title", titles[status] || titles.already_claimed);
     h.id = "tkv-title";
     h.tabIndex = -1;
     wrap.appendChild(h);
-    wrap.appendChild(el("p", "tkv-desc", message || (isNew ? c.content.successMessage : c.content.alreadyClaimedMessage)));
+    wrap.appendChild(el("p", "tkv-desc", message || messages[status] || messages.already_claimed));
     var close = el("button", "tkv-btn", "Continue shopping");
     close.type = "button";
     close.addEventListener("click", closePopup);

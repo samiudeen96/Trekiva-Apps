@@ -4,7 +4,7 @@ import db from "../db.server";
 import { logger } from "../utils/logger.server";
 import { generateClaimCode } from "../discounts/redeem-codes.server";
 import { defaultCampaign } from "../campaigns/defaults";
-import type { CampaignContent } from "../campaigns/schema";
+import type { CampaignContent, CampaignRules } from "../campaigns/schema";
 import { normalizeEmail } from "./email";
 import {
   CampaignUnavailableError,
@@ -72,6 +72,31 @@ export class ClaimService {
   }
 
   /**
+   * The first-purchase gate. Shopify's "Limit to one use per customer" only stops a customer
+   * reusing a code; it does NOT mean "first order only", so order history is checked here.
+   *
+   * It runs before the claim row is inserted, so an ineligible email never consumes a claim
+   * or a discount code, and two concurrent submissions both get the same answer. An email
+   * that already has a claim skips the check: the offer was won before, and an order placed
+   * since must not retroactively revoke it (this also keeps retries working).
+   */
+  private async blockedByFirstPurchase(
+    shopDomain: string,
+    campaignId: string,
+    emailNormalized: string,
+  ): Promise<boolean> {
+    const prior = await db.welcomeOfferClaim.findUnique({
+      where: {
+        shopDomain_campaignId_emailNormalized: { shopDomain, campaignId, emailNormalized },
+      },
+      select: { id: true },
+    });
+    if (prior) return false;
+    const existing = await this.customers.findExisting({ email: emailNormalized });
+    return Boolean(existing?.hasOrders);
+  }
+
+  /**
    * Idempotent first-claim flow.
    * The claim row is inserted FIRST; the DB unique constraint
    * (shop_domain, campaign_id, email_normalized) decides the winner, so concurrent
@@ -90,8 +115,17 @@ export class ClaimService {
     // Campaigns saved before a copy field existed fall back to the defaults, so the
     // storefront is never answered with an empty message.
     const content = { ...defaultCampaign.content, ...(campaign.content as object) } as CampaignContent;
+    const rules = { ...defaultCampaign.rules, ...(campaign.rules as object) } as CampaignRules;
     const claimed: ClaimOutcome = { status: "claimed", message: content.successMessage };
     const already: ClaimOutcome = { status: "already_claimed", message: content.alreadyClaimedMessage };
+    const notEligible: ClaimOutcome = { status: "not_eligible", message: content.notEligibleMessage };
+
+    if (
+      rules.firstPurchaseOnly &&
+      (await this.blockedByFirstPurchase(shopDomain, campaignId, normalized))
+    ) {
+      return notEligible;
+    }
 
     let claimId: string;
     let claimedAt: Date;

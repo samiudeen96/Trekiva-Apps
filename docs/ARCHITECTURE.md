@@ -94,7 +94,9 @@ docs/
   redeem code (`discountRedeemCodeBulkAdd`) to the merchant's chosen discount; the app never creates or edits discounts.
   Shopify applies `usageLimit` to each redeem code separately, not across the discount, so setting it to 1 makes
   every per-claim code single-use without capping how many customers can claim (the app adds a new code per claim).
-  It is recommended, not required. `appliesOncePerCustomer` is what stops a customer reusing their own code.
+  It is recommended, not required. `appliesOncePerCustomer` is what stops a customer reusing their own code;
+  Shopify tracks it per redeem code too, so it does **not** mean "first order only". The campaign rule
+  `firstPurchaseOnly` is what enforces that, by reading `Customer.numberOfOrders` before a claim is inserted.
 - Flow trigger (`flowTriggerReceive`) and theme app extension need no scope.
 - Customer data needs Protected Customer Data access (level 2 for email) approved in the Partner Dashboard.
 

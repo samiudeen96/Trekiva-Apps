@@ -1,12 +1,12 @@
 import type { AdminGraphqlClient } from "../discounts/types";
-import type { CustomerGateway, CustomerRecord } from "../claims/types";
+import type { CustomerGateway, CustomerRecord, ExistingCustomer } from "../claims/types";
 import { logger } from "../utils/logger.server";
 import { gql } from "./graphql.server";
 
 export const FIND_CUSTOMER = `#graphql
   query TrekivaFindCustomer($query: String!) {
     customers(first: 1, query: $query) {
-      nodes { id defaultEmailAddress { marketingState } }
+      nodes { id numberOfOrders defaultEmailAddress { marketingState } }
     }
   }
 `;
@@ -40,6 +40,8 @@ export const SET_METAFIELDS = `#graphql
 
 interface FoundCustomer {
   id: string;
+  /** UnsignedInt64, so the Admin API returns it as a string. */
+  numberOfOrders: string;
   defaultEmailAddress: { marketingState: string } | null;
 }
 
@@ -77,6 +79,15 @@ async function withConsent(admin: AdminGraphqlClient, c: FoundCustomer): Promise
 
 export function createCustomerGateway(admin: AdminGraphqlClient): CustomerGateway {
   return {
+    async findExisting({ email }): Promise<ExistingCustomer | null> {
+      const found = await findByEmail(admin, email);
+      if (!found) return null;
+      // Anything unparseable is treated as "has ordered" so a bad read can never hand a
+      // first-purchase-only offer to a returning customer.
+      const orders = Number(found.numberOfOrders);
+      return { id: found.id, hasOrders: !Number.isFinite(orders) || orders > 0 };
+    },
+
     async findOrCreate({ email }) {
       const existing = await findByEmail(admin, email);
       if (existing) return withConsent(admin, existing);

@@ -12,7 +12,11 @@ export const defaultCampaign: CampaignInput = {
     successMessage:
       "Your 10% welcome offer is on its way! Check your inbox for your discount code.",
     alreadyClaimedTitle: "Already claimed",
-    alreadyClaimedMessage: "You’ve already claimed this welcome offer.",
+    alreadyClaimedMessage:
+      "You’ve already claimed your welcome offer. Please check your previous email for your discount code.",
+    notEligibleTitle: "Welcome back",
+    notEligibleMessage:
+      "This welcome offer is for first-time customers only, so it can’t be applied to your account.",
     privacyText: "By signing up you agree to receive marketing emails. Unsubscribe anytime.",
   },
   design: {
@@ -36,5 +40,6 @@ export const defaultCampaign: CampaignInput = {
     devices: "all",
     frequency: "visitor",
     frequencyDays: 7,
+    firstPurchaseOnly: false,
   },
 };

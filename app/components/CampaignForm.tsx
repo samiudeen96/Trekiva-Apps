@@ -23,6 +23,8 @@ const contentFields: [keyof CampaignContent, string, boolean][] = [
   ["successMessage", "Success message", true],
   ["alreadyClaimedTitle", "Already claimed title", false],
   ["alreadyClaimedMessage", "Already claimed message", true],
+  ["notEligibleTitle", "Not eligible title", false],
+  ["notEligibleMessage", "Not eligible message", true],
   ["privacyText", "Privacy text", true],
 ];
 
@@ -192,13 +194,23 @@ export function CampaignForm({ initial, errors = {}, heading, discounts }: Props
                     The base code {selected.code} also works, so don&apos;t publish it.
                   </s-text>
                   <s-text>
-                    Shopify usage limit (applies per code):{" "}
-                    {selected.usageLimit === null ? "Unlimited" : `${selected.usageLimit} per code`}
+                    Shopify usage limit:{" "}
+                    {selected.usageLimit === null
+                      ? "Unlimited (each code stays redeemable after use)"
+                      : `${selected.usageLimit} per code \u2014 campaign total stays unlimited`}
                   </s-text>
                   <s-text>One use per customer: {selected.oncePerCustomer ? "Yes" : "No"}</s-text>
                   <s-text>App claim limit: 1 per email</s-text>
-                  <s-text>First-purchase eligibility: Not enforced (returning customers can claim)</s-text>
-                  <s-text>Eligibility: {selected.eligibility}</s-text>
+                  <s-text>
+                    First-purchase eligibility:{" "}
+                    {preview.rules.firstPurchaseOnly
+                      ? "Enabled (customers with a previous order are refused)"
+                      : "Disabled (returning customers can claim)"}
+                  </s-text>
+                  <s-text>
+                    Eligibility: {selected.eligibility}
+                    {selected.segmentNames.length > 0 && ` (${selected.segmentNames.join(", ")})`}
+                  </s-text>
                   <s-text>Minimum purchase: {selected.minimumRequirement}</s-text>
                   <s-text>
                     Active: {selected.startsAt ? new Date(selected.startsAt).toLocaleDateString() : "—"}
@@ -252,6 +264,16 @@ export function CampaignForm({ initial, errors = {}, heading, discounts }: Props
             <s-number-field name="rules.frequencyDays" label="Days between displays" min={1} max={365} value={String(rules.frequencyDays)} error={err("rules.frequencyDays")} />
             <s-text color="subdued">
               Frequency only controls when the popup is shown. Each email can still claim a campaign only once.
+            </s-text>
+            <s-checkbox
+              name="rules.firstPurchaseOnly"
+              label="First-time customers only"
+              checked={rules.firstPurchaseOnly}
+            />
+            <s-text color="subdued">
+              Checks the customer&apos;s order history in Shopify and refuses the offer to anyone who
+              has already completed an order. Shopify&apos;s &quot;Limit to one use per customer&quot;
+              does not do this &mdash; it only stops a customer reusing their own code.
             </s-text>
           </s-stack>
         </s-section>

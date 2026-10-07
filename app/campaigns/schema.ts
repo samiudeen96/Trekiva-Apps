@@ -13,6 +13,8 @@ export const contentSchema = z.object({
   successMessage: text(400),
   alreadyClaimedTitle: text(120),
   alreadyClaimedMessage: text(400),
+  notEligibleTitle: text(120),
+  notEligibleMessage: text(400),
   privacyText: optionalText(300),
 });
 
@@ -43,6 +45,12 @@ export const rulesSchema = z.object({
   devices: z.enum(["all", "desktop", "mobile"]),
   frequency: z.enum(["session", "visitor", "days"]),
   frequencyDays: z.coerce.number().int().min(1).max(365),
+  /**
+   * Restricts the offer to customers who have never completed an order. Shopify's
+   * "Limit to one use per customer" does NOT mean "first order only", so this is the
+   * only thing that keeps returning customers out.
+   */
+  firstPurchaseOnly: z.boolean(),
 });
 
 export const detailsSchema = z.object({
