@@ -83,6 +83,8 @@ const discount = z.object({
     .string()
     .trim()
     .max(200)
+    // The button already uses the discount link; pasting the placeholder here means "no extra page".
+    .transform((v) => (v === "{{discount_link}}" ? "" : v))
     .refine((v) => v === "" || (v.startsWith("/") && !v.startsWith("//")), "Start with a single /"),
 });
 const button = z.object({

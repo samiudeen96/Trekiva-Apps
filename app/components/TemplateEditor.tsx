@@ -295,7 +295,7 @@ function SectionFields({ s, set }: { s: EmailSection; set: (s: EmailSection) => 
           <Text label="Heading" value={s.heading} max={120} onChange={(heading) => set({ ...s, heading })} />
           <Text label="Description" area rich value={s.description} max={400} onChange={(description) => set({ ...s, description })} />
           <Text label="Button label" value={s.buttonLabel} max={40} hint="Empty hides the button." onChange={(buttonLabel) => set({ ...s, buttonLabel })} />
-          <Text label="After applying, send them to" value={s.redirectPath} max={200} hint='A store path such as /collections/sandals. Empty = home page.' onChange={(redirectPath) => set({ ...s, redirectPath })} />
+          <Text label="After applying, send them to" value={s.redirectPath} max={200} hint='Optional. A store path such as /collections/sandals. Leave empty to land on the home page. The button already applies the discount, so do not paste a link here.' onChange={(redirectPath) => set({ ...s, redirectPath })} />
           <Text label="Conditions / expiry note" area rich value={s.note} max={300} hint="e.g. Valid on your first order. Expires in 30 days." onChange={(note) => set({ ...s, note })} />
         </>
       );
