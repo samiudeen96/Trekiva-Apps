@@ -14,7 +14,6 @@ import {
   type ClaimOutcome,
   type CustomerGateway,
   type DiscountCodeGateway,
-  type FlowGateway,
 } from "./types";
 
 const emailSchema = z.string().max(254).email();
@@ -39,7 +38,6 @@ function uniqueViolation(e: unknown): "email" | "code" | null {
 export class ClaimService {
   constructor(
     private readonly customers: CustomerGateway,
-    private readonly flow: FlowGateway,
     private readonly discountCodes: DiscountCodeGateway,
   ) {}
 
@@ -52,6 +50,7 @@ export class ClaimService {
     shopDomain: string;
     campaignId: string;
     emailNormalized: string;
+    marketingConsent: boolean;
     baseCode: string;
   }) {
     const { baseCode, ...row } = input;
@@ -100,9 +99,14 @@ export class ClaimService {
    * Idempotent first-claim flow.
    * The claim row is inserted FIRST; the DB unique constraint
    * (shop_domain, campaign_id, email_normalized) decides the winner, so concurrent
-   * requests can never both fulfil. Only the winner touches Shopify / Flow.
+   * requests can never both fulfil. Only the winner touches Shopify.
+   *
+   * Fulfilment order is fixed, because Shopify Flow starts the moment the tag lands and must
+   * then find everything it reads:
+   *   customer -> discount code -> metafields -> tag (LAST)
+   * Every step is idempotent, so a retry simply runs them again with the stored code.
    */
-  async claim({ shopDomain, campaignId, email }: ClaimContext): Promise<ClaimOutcome> {
+  async claim({ shopDomain, campaignId, email, marketingConsent = false }: ClaimContext): Promise<ClaimOutcome> {
     const normalized = normalizeEmail(email);
     if (!emailSchema.safeParse(normalized).success) throw new InvalidEmailError();
 
@@ -130,19 +134,24 @@ export class ClaimService {
     let claimId: string;
     let claimedAt: Date;
     let code: string;
+    let consent: boolean;
+    let firstAttempt: boolean;
     const row = await this.insertClaim({
       shopDomain,
       campaignId,
       emailNormalized: normalized,
+      marketingConsent,
       baseCode: campaign.discountCode,
     });
     if (row) {
       claimId = row.id;
       claimedAt = row.claimedAt;
       code = row.discountCode;
+      consent = row.marketingConsent;
+      firstAttempt = true;
     } else {
       // Existing claim: it only gets another fulfilment attempt if a previous attempt
-      // failed BEFORE Flow was triggered. The compare-and-set lets exactly one request retry.
+      // failed BEFORE the Flow handoff (the tag). The compare-and-set lets exactly one request retry.
       const existing = await db.welcomeOfferClaim.findUnique({
         where: {
           shopDomain_campaignId_emailNormalized: {
@@ -152,11 +161,12 @@ export class ClaimService {
           },
         },
       });
-      if (!existing || existing.flowTriggeredAt) return already;
+      if (!existing || existing.flowHandoffAt || existing.flowTriggeredAt) return already;
 
       const lock = await db.welcomeOfferClaim.updateMany({
         where: {
           id: existing.id,
+          flowHandoffAt: null,
           flowTriggeredAt: null,
           OR: [
             { emailStatus: "FAILED" },
@@ -168,52 +178,53 @@ export class ClaimService {
       if (lock.count !== 1) return already;
       claimId = existing.id;
       claimedAt = existing.claimedAt;
-      // A retry reuses the stored code; issueCode is a no-op if it already reached Shopify.
+      // A retry reuses the stored code and the consent given at the original submission.
       code = existing.discountCode;
+      consent = existing.marketingConsent;
+      firstAttempt = false;
     }
 
     let step: ClaimFailureStep = "customer";
     try {
-      const customer = await this.customers.findOrCreate({ email: normalized });
-      const customerId = customer.id;
+      const customer = await this.customers.findOrCreate({ email: normalized, marketingConsent: consent });
       await db.welcomeOfferClaim.update({
         where: { id: claimId },
-        data: { shopifyCustomerId: customerId },
+        data: { shopifyCustomerId: customer.id, emailEligibility: customer.emailEligibility },
       });
-      // The code must be redeemable before Flow emails it.
+      // The code must be redeemable before the customer can be told about it.
       step = "discount";
       await this.discountCodes.issueCode({ discountId, code });
-      step = "flow";
-      await this.flow.triggerWelcomeOfferClaimed({
-        shopDomain,
-        email: normalized,
-        campaignName: campaign.name,
+      step = "metafields";
+      await this.customers.writeClaimMetafields({
+        customerId: customer.id,
         discountCode: code,
         claimedAt,
-        customerId,
+        campaignId,
+        claimId,
       });
-      // Flow still fires for opted-out customers (the merchant's workflow may use another email
-      // action), but Shopify Email will skip them, so the claim records it for the merchant.
+      // Flow starts on this tag, so it goes last. A customer who already has it will not start Flow again.
+      step = "tag";
+      if (firstAttempt && customer.alreadyTagged) {
+        logger.warn(
+          { claimId, shopDomain, campaignId },
+          "customer already had the claim tag: Flow will not start for this claim until the tag is removed and re-added",
+        );
+      }
+      await this.customers.addClaimTag({ customerId: customer.id });
       await db.welcomeOfferClaim.update({
         where: { id: claimId },
         data: {
-          flowTriggeredAt: new Date(),
-          emailStatus: customer.subscribed ? "TRIGGERED" : "NOT_SUBSCRIBED",
+          flowHandoffAt: new Date(),
+          emailStatus: "READY_FOR_FLOW",
           failureStep: null,
           failureReason: null,
         },
       });
-      // After Flow: a metafield problem must never affect the claim outcome.
-      await this.customers.writeClaimMetafields({
-        customerId,
-        discountCode: code,
-        claimedAt,
-      });
     } catch (err) {
-      logger.error({ err, claimId, shopDomain, campaignId }, "claim fulfilment failed");
+      logger.error({ err, claimId, shopDomain, campaignId, step }, "claim fulfilment failed");
       await db.welcomeOfferClaim
         .updateMany({
-          where: { id: claimId, flowTriggeredAt: null },
+          where: { id: claimId, flowHandoffAt: null },
           data: {
             emailStatus: "FAILED",
             failureStep: step,

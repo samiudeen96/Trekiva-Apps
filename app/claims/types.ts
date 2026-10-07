@@ -1,5 +1,5 @@
-/** Which fulfilment step a failed claim stopped at. */
-export type ClaimFailureStep = "customer" | "discount" | "flow";
+/** Which fulfilment step a failed claim stopped at (legacy rows may also hold "flow"). */
+export type ClaimFailureStep = "customer" | "discount" | "metafields" | "tag";
 
 export type ClaimStatus = "claimed" | "already_claimed" | "not_eligible";
 
@@ -12,14 +12,8 @@ export interface ClaimContext {
   shopDomain: string;
   campaignId: string;
   email: string;
-}
-
-export interface FulfilmentInput {
-  shopDomain: string;
-  email: string;
-  campaignName: string;
-  discountCode: string;
-  claimedAt: Date;
+  /** The popup's explicit "email me offers" checkbox. Ignored for an existing claim (its stored value wins). */
+  marketingConsent?: boolean;
 }
 
 /** What the first-purchase gate needs to know about an email that already exists in Shopify. */
@@ -30,42 +24,47 @@ export interface ExistingCustomer {
   hasOrders: boolean;
 }
 
+/** Whether Shopify Email may send this customer marketing email. Not part of whether the claim is valid. */
+export type EmailEligibility = "SUBSCRIBED" | "NOT_SUBSCRIBED" | "UNKNOWN";
+
 export interface CustomerRecord {
   /** Customer GID */
   id: string;
-  /** False when the customer cannot get marketing email (opted out, pending double opt-in, invalid). */
-  subscribed: boolean;
+  emailEligibility: EmailEligibility;
+  /** The customer already carried the claim tag before this attempt, so adding it will not start Flow. */
+  alreadyTagged: boolean;
 }
 
 export interface CustomerGateway {
   /**
-   * Finds the Shopify customer by email or creates it. Customers who never chose an email
-   * marketing state are subscribed (the popup submission is the opt-in); others are left as is.
+   * Finds the Shopify customer by email or creates it. Marketing consent is only ever granted
+   * from the popup's explicit checkbox (`marketingConsent`), and only to a customer who has not
+   * made a choice; an existing choice, including an unsubscribe, is never overridden.
    */
-  findOrCreate(input: { email: string }): Promise<CustomerRecord>;
+  findOrCreate(input: { email: string; marketingConsent: boolean }): Promise<CustomerRecord>;
   /**
    * Read-only lookup for the first-purchase gate. Null when no Shopify customer exists for
    * this email yet, which is itself proof the address has never ordered.
    */
   findExisting(input: { email: string }): Promise<ExistingCustomer | null>;
-  /** Best-effort mirror into trekiva.* customer metafields. Must not throw. */
+  /**
+   * Writes the trekiva.* metafields Flow reads. An upsert, so safe to repeat.
+   * Throws on any failure: the claim must not be handed to Flow without them.
+   */
   writeClaimMetafields(input: {
     customerId: string;
     discountCode: string;
     claimedAt: Date;
+    campaignId: string;
+    claimId: string;
   }): Promise<void>;
+  /** Adds the trekiva_welcome_claimed tag without touching other tags. Idempotent; throws on failure. */
+  addClaimTag(input: { customerId: string }): Promise<void>;
 }
 
 export interface DiscountCodeGateway {
   /** Adds `code` to the Shopify discount; resolves once it is redeemable. Idempotent. */
   issueCode(input: { discountId: string; code: string }): Promise<void>;
-}
-
-/** Fires the "Welcome Offer Claimed" Flow trigger. */
-export interface FlowGateway {
-  triggerWelcomeOfferClaimed(
-    input: FulfilmentInput & { customerId: string },
-  ): Promise<void>;
 }
 
 export class CampaignUnavailableError extends Error {}

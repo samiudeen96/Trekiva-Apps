@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigation, useSubmit } from "react-router";
 import { claimCodePrefix } from "../discounts/claim-code";
+import { TAG_CLAIMED, TAG_EMAIL_SENT } from "../claims/handoff";
 import type { DiscountSummary } from "../discounts/types";
 import type { CampaignInput, CampaignContent } from "../campaigns/schema";
 import { parseCampaignForm, type FieldErrors } from "../campaigns/form";
@@ -19,6 +20,7 @@ const contentFields: [keyof CampaignContent, string, boolean][] = [
   ["description", "Description", true],
   ["emailPlaceholder", "Email placeholder", false],
   ["buttonText", "Button text", false],
+  ["consentLabel", "Marketing checkbox label", false],
   ["successTitle", "Success title", false],
   ["successMessage", "Success message", true],
   ["alreadyClaimedTitle", "Already claimed title", false],
@@ -278,24 +280,26 @@ export function CampaignForm({ initial, errors = {}, heading, discounts }: Props
           </s-stack>
         </s-section>
 
-        <s-section heading="7. Shopify Flow">
+        <s-section heading="7. Email automation">
           <s-stack gap="small-200">
             <s-text>
-              Trekiva fires the <s-text type="strong">Welcome Offer Claimed</s-text> trigger once per
-              first-time claim. Duplicate prevention happens in Trekiva, so your Flow does not need any
-              checks for it.
+              Email automation: <s-text type="strong">Shopify Flow via customer tag</s-text>. Trekiva does not send
+              the email itself.
             </s-text>
-            <s-text>1. In Shopify Flow, create a workflow and choose the trigger Welcome Offer Claimed.</s-text>
-            <s-text>2. Add the action Send marketing email (Shopify Email) to the customer.</s-text>
             <s-text>
-              3. In the email, insert the Flow variable for Discount code. Available data: customer, customer
-              email, campaign name, discount code, claimed at.
+              After a claim, Trekiva saves the customer&apos;s code in the metafields
+              trekiva.welcome_discount_code, welcome_offer_claimed and welcome_claimed_at, then adds the tag{" "}
+              <s-text type="strong">{TAG_CLAIMED}</s-text> last.
             </s-text>
-            <s-text>4. Turn the workflow on.</s-text>
+            <s-text>1. In Shopify Flow, create a workflow with the trigger Customer tags added.</s-text>
+            <s-text>2. Add a condition: tags contain {TAG_CLAIMED}.</s-text>
+            <s-text>3. Add the action Send marketing email, using the customer metafield trekiva.welcome_discount_code.</s-text>
+            <s-text>4. Add the action Add customer tags: {TAG_EMAIL_SENT}. Trekiva reads it to show Email sent.</s-text>
             <s-text color="subdued">
-              Submitting the popup subscribes new customers and customers who never chose, so make sure
-              your privacy text says they will receive marketing emails. Customers who unsubscribed
-              earlier stay unsubscribed; Shopify Email skips them and their claim shows Not subscribed.
+              Duplicate prevention happens in Trekiva, so your Flow needs no checks for it. Shopify Email only
+              reaches customers who are subscribed to email marketing. Trekiva subscribes a customer only when they
+              tick the checkbox in the popup; a customer who does not still gets a valid code, but may get no email.
+              Check Settings for the required metafield definitions.
             </s-text>
           </s-stack>
         </s-section>

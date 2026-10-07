@@ -4,6 +4,7 @@ import { useLoaderData, useNavigate, useNavigation, useSubmit } from "react-rout
 import { authenticate } from "../shopify.server";
 import { CLAIMS_PAGE_SIZE, claimRepository } from "../repositories/claim.repository";
 import { downloadClaimsCsv } from "../components/download-claims";
+import { eligibilityLabel, emailBadge, handoffLabel } from "../claims/status";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
@@ -25,6 +26,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       discount: c.discountCode,
       claimedAt: c.claimedAt.toISOString(),
       status: c.emailStatus,
+      eligibility: c.emailEligibility,
+      handoff: handoffLabel(c.flowHandoffAt, c.emailStatus),
     })),
   };
 };
@@ -35,21 +38,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   if (form.get("intent") !== "delete") return { deleted: false };
   return { deleted: await claimRepository.delete(session.shop, String(form.get("id") ?? "")) };
 };
-
-const statusTone = {
-  PENDING: "neutral",
-  TRIGGERED: "info",
-  SENT: "success",
-  FAILED: "critical",
-  NOT_SUBSCRIBED: "warning",
-} as const;
-const statusLabel = {
-  PENDING: "Pending",
-  TRIGGERED: "Flow triggered",
-  SENT: "Sent",
-  FAILED: "Failed",
-  NOT_SUBSCRIBED: "Not subscribed",
-} as const;
 
 export default function Claims() {
   const { claims, page, pages, total, q } = useLoaderData<typeof loader>();
@@ -92,7 +80,9 @@ export default function Claims() {
               <s-table-header>Campaign</s-table-header>
               <s-table-header>Discount</s-table-header>
               <s-table-header>Claimed</s-table-header>
-              <s-table-header>Email status</s-table-header>
+              <s-table-header>Flow handoff</s-table-header>
+              <s-table-header>Email</s-table-header>
+              <s-table-header>Marketing</s-table-header>
               <s-table-header>Actions</s-table-header>
             </s-table-header-row>
             <s-table-body>
@@ -107,9 +97,13 @@ export default function Claims() {
                   <s-table-cell>{c.campaign}</s-table-cell>
                   <s-table-cell>{c.discount}</s-table-cell>
                   <s-table-cell>{new Date(c.claimedAt).toLocaleString()}</s-table-cell>
+                  <s-table-cell>{c.handoff}</s-table-cell>
                   <s-table-cell>
-                    <s-badge tone={statusTone[c.status]}>{statusLabel[c.status]}</s-badge>
+                    <s-badge tone={emailBadge(c.status, c.eligibility).tone}>
+                      {emailBadge(c.status, c.eligibility).label}
+                    </s-badge>
                   </s-table-cell>
+                  <s-table-cell>{eligibilityLabel[c.eligibility]}</s-table-cell>
                   <s-table-cell>
                     {confirmId === c.id ? (
                       <s-stack direction="inline" gap="small-200">

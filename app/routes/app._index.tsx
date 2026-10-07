@@ -4,6 +4,7 @@ import { boundary } from "@shopify/shopify-app-react-router/server";
 import { authenticate } from "../shopify.server";
 import db from "../db.server";
 import { claimRepository } from "../repositories/claim.repository";
+import { emailBadge } from "../claims/status";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
@@ -29,25 +30,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       email: c.emailNormalized,
       campaign: c.campaign.name,
       status: c.emailStatus,
+      eligibility: c.emailEligibility,
       claimedAt: c.claimedAt.toISOString(),
     })),
   };
 };
-
-const statusTone = {
-  PENDING: "neutral",
-  TRIGGERED: "info",
-  SENT: "success",
-  FAILED: "critical",
-  NOT_SUBSCRIBED: "warning",
-} as const;
-const statusLabel = {
-  PENDING: "Pending",
-  TRIGGERED: "Flow triggered",
-  SENT: "Sent",
-  FAILED: "Failed",
-  NOT_SUBSCRIBED: "Not subscribed",
-} as const;
 
 function timeAgo(iso: string): string {
   const s = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 1000));
@@ -78,15 +65,16 @@ export default function Dashboard() {
         Create campaign
       </s-button>
       {d.failedClaims > 0 && (
-        <s-banner tone="critical" heading={`${d.failedClaims} claim(s) did not reach Shopify Flow`}>
-          Those customers did not get their email yet. They will be retried automatically when they submit
-          again. Check Settings for connection problems.
+        <s-banner tone="critical" heading={`${d.failedClaims} claim(s) were not handed over to Shopify Flow`}>
+          Those customers have no email yet. They will be retried automatically when they submit
+          again, or use Retry in Settings. Check Settings for connection problems.
         </s-banner>
       )}
       {d.notSubscribedClaims > 0 && (
-        <s-banner tone="warning" heading={`${d.notSubscribedClaims} claim(s) from customers who unsubscribed from email marketing`}>
-          Flow was triggered, but Shopify Email does not send marketing email to these customers, so they
-          may not have received their code. They are marked Not subscribed on the Claims page.
+        <s-banner tone="warning" heading={`${d.notSubscribedClaims} claim(s) from customers who are not subscribed to email marketing`}>
+          Their claims are valid and their codes work, but Shopify Email does not send marketing email to
+          customers who are not subscribed, so they may not have received their code. They are marked Not
+          subscribed on the Claims page.
         </s-banner>
       )}
       {d.activeCampaigns === 0 && (
@@ -150,7 +138,9 @@ export default function Dashboard() {
                     <s-table-cell>{c.campaign}</s-table-cell>
                     <s-table-cell>{timeAgo(c.claimedAt)}</s-table-cell>
                     <s-table-cell>
-                      <s-badge tone={statusTone[c.status]}>{statusLabel[c.status]}</s-badge>
+                      <s-badge tone={emailBadge(c.status, c.eligibility).tone}>
+                        {emailBadge(c.status, c.eligibility).label}
+                      </s-badge>
                     </s-table-cell>
                   </s-table-row>
                 ))}

@@ -5,16 +5,19 @@ import { env } from "../utils/env.server";
 import {
   checkCampaignDiscounts,
   checkDatabase,
+  checkMetafieldDefinitions,
   checkShopify,
+  checkWriteAccess,
   type Check,
 } from "../utils/health.server";
+import { TAG_CLAIMED, TAG_EMAIL_SENT } from "../claims/handoff";
+import { ensureMetafieldDefinitions } from "../shopify/handoff.server";
 import { claimRepository } from "../repositories/claim.repository";
 import { campaignRepository } from "../repositories/campaign.repository";
 import { getCodeDiscount } from "../discounts/discounts.server";
 import { ClaimService } from "../claims/claim.service";
 import { retryClaims } from "../claims/retry";
 import { createCustomerGateway } from "../shopify/customers.server";
-import { createFlowGateway } from "../flow/flow.server";
 import { createDiscountCodeGateway } from "../discounts/redeem-codes.server";
 
 const RETRY_BATCH = 50;
@@ -23,7 +26,9 @@ const FAILURES_SHOWN = 5;
 const stepLabel: Record<string, string> = {
   customer: "Creating the Shopify customer",
   discount: "Adding the discount code",
-  flow: "Triggering Shopify Flow",
+  metafields: "Writing the customer metafields",
+  tag: "Adding the Flow trigger tag",
+  flow: "Triggering Shopify Flow (legacy)",
 };
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
@@ -31,20 +36,32 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const campaigns = (await campaignRepository.listWithClaimCounts(session.shop)).filter(
     (c) => c.status === "ACTIVE",
   );
-  const [database, shopifyChecks, stats, discounts, failed] = await Promise.all([
+  const [database, shopifyChecks, stats, discounts, failed, definitions] = await Promise.all([
     checkDatabase(),
     checkShopify(admin, session.scope),
     claimRepository.stats(session.shop),
     checkCampaignDiscounts(campaigns, (id) => getCodeDiscount(admin, id)),
     claimRepository.failed(session.shop, FAILURES_SHOWN),
+    checkMetafieldDefinitions(admin),
   ]);
+  const access = checkWriteAccess(session.scope);
+  const activeCampaign: Check =
+    campaigns.length > 0
+      ? { ok: true, detail: `${campaigns.length} active campaign(s)` }
+      : { ok: false, detail: "No active campaign: the popup is not showing on your store" };
 
-  // Shopify offers no API to confirm a Flow workflow is switched on, so report evidence instead.
-  const flow: Check = stats.failed > 0
-    ? { ok: false, detail: `${stats.failed} claim(s) failed before Flow was triggered` }
-    : stats.lastFlowTriggeredAt
-      ? { ok: true, detail: `Last trigger fired ${stats.lastFlowTriggeredAt.toISOString()}` }
-      : { ok: true, detail: "No trigger fired yet. Create the Flow workflow, then submit a test email." };
+  // Shopify offers no API to confirm a Flow workflow exists or is switched on, so this reports
+  // whether the app side is ready and what has been handed over so far.
+  const appReady = [shopifyChecks.shopify, shopifyChecks.scopes, access.customers, access.discounts, database, definitions].every(
+    (c) => c.ok,
+  );
+  const flow: Check = !appReady
+    ? { ok: false, detail: "Not ready: fix the checks above first" }
+    : stats.failed > 0
+      ? { ok: false, detail: `${stats.failed} claim(s) failed before the Flow handoff` }
+      : stats.lastHandoffAt
+        ? { ok: true, detail: `Ready for Shopify Flow. Last claim handed over ${stats.lastHandoffAt.toISOString()}` }
+        : { ok: true, detail: "Ready for Shopify Flow. Create the workflow below, then submit a test email." };
 
   return {
     shop: session.shop,
@@ -53,10 +70,17 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     checks: [
       ["Shopify connection", shopifyChecks.shopify],
       ["Granted scopes", shopifyChecks.scopes],
+      ["Customer, metafield and tag write access", access.customers],
+      ["Discount write access", access.discounts],
       ["Database", database],
-      ["Campaign discounts", discounts],
-      ["Shopify Flow", flow],
+      ["Active campaign", activeCampaign],
+      ["Linked Shopify discount", discounts],
+      ["Customer metafield definitions", definitions],
+      ["Shopify Flow integration", flow],
     ] as [string, Check][],
+    definitionsMissing: definitions.missing.length > 0,
+    triggerTag: TAG_CLAIMED,
+    sentTag: TAG_EMAIL_SENT,
     failedTotal: stats.failed,
     failures: failed.map((c) => ({
       id: c.id,
@@ -71,23 +95,31 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
-  if ((await request.formData()).get("intent") !== "retry-failed") return { retry: null };
+  const intent = (await request.formData()).get("intent");
+
+  if (intent === "create-definitions") {
+    try {
+      return { retry: null, definitions: await ensureMetafieldDefinitions(admin) };
+    } catch {
+      return { retry: null, definitions: { created: [], failed: [{ key: "all", message: "Shopify request failed" }] } };
+    }
+  }
+  if (intent !== "retry-failed") return { retry: null, definitions: null };
 
   const rows = await claimRepository.failed(session.shop, RETRY_BATCH);
-  const service = new ClaimService(
-    createCustomerGateway(admin),
-    createFlowGateway(admin),
-    createDiscountCodeGateway(admin),
-  );
+  const service = new ClaimService(createCustomerGateway(admin), createDiscountCodeGateway(admin));
   const retry = await retryClaims(rows, ({ campaignId, email }) =>
     service.claim({ shopDomain: session.shop, campaignId, email }),
   );
-  return { retry };
+  return { retry, definitions: null };
 };
 
 export default function Settings() {
-  const { checks, appUrl, shop, proxyPath, failures, failedTotal } = useLoaderData<typeof loader>();
-  const result = useActionData<typeof action>()?.retry;
+  const { checks, appUrl, shop, proxyPath, failures, failedTotal, definitionsMissing, triggerTag, sentTag } =
+    useLoaderData<typeof loader>();
+  const actionData = useActionData<typeof action>();
+  const result = actionData?.retry;
+  const defResult = actionData?.definitions;
   const submit = useSubmit();
   const retrying = useNavigation().state === "submitting";
 
@@ -107,6 +139,37 @@ export default function Settings() {
         </s-stack>
       </s-section>
 
+      <s-section heading="Shopify Flow setup">
+        <s-stack gap="small-200">
+          <s-text>
+            Trekiva does not send the email. After a claim it saves the customer&apos;s code in metafields and
+            adds the tag <s-text type="strong">{triggerTag}</s-text>; your Flow workflow does the rest.
+          </s-text>
+          <s-text>1. Trigger: Customer tags added.</s-text>
+          <s-text>2. Condition: Tags contains {triggerTag}.</s-text>
+          <s-text>3. Action: Send marketing email to the customer. The code is in the customer metafield trekiva.welcome_discount_code.</s-text>
+          <s-text>4. Action: Add customer tags {sentTag}.</s-text>
+          <s-text color="subdued">
+            Flow adds {sentTag}, not Trekiva. Trekiva reads it only to show &quot;Email sent&quot;. No custom Flow
+            trigger or Shopify Plus is needed. Shopify Email only reaches customers subscribed to email marketing.
+          </s-text>
+          {defResult && (
+            <s-banner tone={defResult.failed.length ? "warning" : "success"}>
+              {defResult.created.length > 0 && `Created: ${defResult.created.join(", ")}. `}
+              {defResult.failed.map((f) => `${f.key}: ${f.message}`).join(" ")}
+              {defResult.created.length === 0 && defResult.failed.length === 0 && "Nothing to create."}
+            </s-banner>
+          )}
+          {definitionsMissing && (
+            <s-stack direction="inline">
+              <s-button onClick={() => submit({ intent: "create-definitions" }, { method: "post" })}>
+                Create metafield definitions
+              </s-button>
+            </s-stack>
+          )}
+        </s-stack>
+      </s-section>
+
       {failedTotal > 0 && (
         <s-section heading="Failed claims">
           <s-stack gap="base">
@@ -117,7 +180,7 @@ export default function Settings() {
               </s-banner>
             )}
             <s-text color="subdued">
-              These customers claimed an offer but did not get their email. Fix the cause below, then retry.
+              These customers claimed an offer but were not handed over to Shopify Flow, so no email was sent. Fix the cause below, then retry.
               {failedTotal > failures.length ? ` Showing the latest ${failures.length} of ${failedTotal}.` : ""}
             </s-text>
             {failures.map((f) => (

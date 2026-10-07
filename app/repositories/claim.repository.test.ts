@@ -64,3 +64,66 @@ describe("claimRepository", () => {
     expect(s.last7Days).toBe(TOTAL);
   });
 });
+
+describe("claimRepository: Flow email-sent sync", () => {
+  const syncShop = `claims-sync-${Date.now()}.myshopify.com`;
+  let campaignId: string;
+
+  const seed = async (email: string, customer: string, data: Record<string, unknown> = {}) =>
+    db.welcomeOfferClaim.create({
+      data: {
+        shopDomain: syncShop,
+        campaignId,
+        emailNormalized: email,
+        discountCode: `S-${email}`,
+        shopifyCustomerId: customer,
+        emailStatus: "READY_FOR_FLOW",
+        emailEligibility: "SUBSCRIBED",
+        ...data,
+      },
+    });
+
+  beforeAll(async () => {
+    campaignId = (
+      await db.campaign.create({
+        data: { shopDomain: syncShop, name: "S", status: "ACTIVE", discountCode: "W", content: {}, design: {}, rules: {} },
+      })
+    ).id;
+  });
+  afterAll(async () => {
+    await db.welcomeOfferClaim.deleteMany({ where: { shopDomain: syncShop } });
+    await db.campaign.deleteMany({ where: { shopDomain: syncShop } });
+  });
+
+  it("only looks at customers with a claim waiting for Flow", async () => {
+    await seed("wait@x.co", "gid://shopify/Customer/1");
+    await seed("done@x.co", "gid://shopify/Customer/2", { emailStatus: "EMAIL_SENT" });
+    expect(await claimRepository.hasPendingHandoff(syncShop, "gid://shopify/Customer/1")).toBe(true);
+    expect(await claimRepository.hasPendingHandoff(syncShop, "gid://shopify/Customer/2")).toBe(false);
+    expect(await claimRepository.hasPendingHandoff(syncShop, "gid://shopify/Customer/404")).toBe(false);
+    expect(await claimRepository.hasPendingHandoff("other.myshopify.com", "gid://shopify/Customer/1")).toBe(false);
+  });
+
+  it("marks a waiting claim as sent once, scoped to the shop", async () => {
+    const row = await db.welcomeOfferClaim.findFirstOrThrow({ where: { shopDomain: syncShop, emailNormalized: "wait@x.co" } });
+    expect(await claimRepository.markEmailSent("other.myshopify.com", "gid://shopify/Customer/1")).toBe(0);
+    expect(await claimRepository.markEmailSent(syncShop, "gid://shopify/Customer/1")).toBe(1);
+    expect(await claimRepository.markEmailSent(syncShop, "gid://shopify/Customer/1")).toBe(0);
+    const after = await db.welcomeOfferClaim.findUniqueOrThrow({ where: { id: row.id } });
+    expect(after.emailStatus).toBe("EMAIL_SENT");
+    expect(after.emailSentAt).not.toBeNull();
+  });
+
+  it("does not report Email sent for a customer Shopify Email cannot deliver to", async () => {
+    await seed("unsub@x.co", "gid://shopify/Customer/3", { emailEligibility: "NOT_SUBSCRIBED" });
+    expect(await claimRepository.markEmailSent(syncShop, "gid://shopify/Customer/3")).toBe(0);
+    expect((await db.welcomeOfferClaim.findFirstOrThrow({ where: { shopDomain: syncShop, emailNormalized: "unsub@x.co" } })).emailStatus).toBe("READY_FOR_FLOW");
+  });
+
+  it("counts not-subscribed claims by eligibility and by the legacy status", async () => {
+    await seed("legacy@x.co", "gid://shopify/Customer/4", { emailStatus: "NOT_SUBSCRIBED", emailEligibility: "UNKNOWN" });
+    const stats = await claimRepository.stats(syncShop);
+    expect(stats.notSubscribed).toBe(2); // unsub@x.co (eligibility) + legacy@x.co (legacy status)
+    expect(stats.lastHandoffAt).toBeNull();
+  });
+});

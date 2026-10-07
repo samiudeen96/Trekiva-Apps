@@ -4,12 +4,12 @@ import { authenticate } from "../shopify.server";
 import { ClaimService } from "../claims/claim.service";
 import { CampaignUnavailableError, InvalidEmailError } from "../claims/types";
 import { createCustomerGateway } from "../shopify/customers.server";
-import { createFlowGateway } from "../flow/flow.server";
 import { createDiscountCodeGateway } from "../discounts/redeem-codes.server";
 import { allowClaimAttempt, clientIp } from "../utils/rate-limit.server";
 import { logger } from "../utils/logger.server";
 
-const bodySchema = z.object({ email: z.string().max(254) });
+// marketingConsent is the popup's explicit "email me offers" checkbox; absent means not given.
+const bodySchema = z.object({ email: z.string().max(254), marketingConsent: z.boolean().optional() });
 
 const json = (body: object, status = 200) =>
   Response.json(body, { status, headers: { "Cache-Control": "no-store" } });
@@ -33,16 +33,13 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     return json({ status: "error", message: "Please enter a valid email address." }, 400);
   }
 
-  const claimService = new ClaimService(
-    createCustomerGateway(admin),
-    createFlowGateway(admin),
-    createDiscountCodeGateway(admin),
-  );
+  const claimService = new ClaimService(createCustomerGateway(admin), createDiscountCodeGateway(admin));
   try {
     const outcome = await claimService.claim({
       shopDomain: session.shop,
       campaignId: params.campaignId!,
       email: body.data.email,
+      marketingConsent: body.data.marketingConsent === true,
     });
     return json(outcome);
   } catch (err) {

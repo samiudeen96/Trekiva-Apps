@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { checkCampaignDiscounts, missingScopes } from "./health.server";
+import { checkCampaignDiscounts, checkWriteAccess, missingScopes } from "./health.server";
 
 const required = ["read_customers", "write_customers", "read_discounts", "write_discounts"];
 
@@ -60,5 +60,21 @@ describe("checkCampaignDiscounts", () => {
       throw new Error("shopify down");
     });
     expect(r).toEqual({ ok: false, detail: '"A": could not check its discount' });
+  });
+});
+
+describe("checkWriteAccess", () => {
+  it("passes when both write scopes are granted", () => {
+    const r = checkWriteAccess("write_customers,write_discounts");
+    expect(r.customers.ok).toBe(true);
+    expect(r.discounts.ok).toBe(true);
+  });
+
+  it("flags each missing write scope separately", () => {
+    const r = checkWriteAccess("read_customers,write_discounts");
+    expect(r.customers.ok).toBe(false);
+    expect(r.customers.detail).toMatch(/write_customers/);
+    expect(r.discounts.ok).toBe(true);
+    expect(checkWriteAccess(undefined).discounts.ok).toBe(false);
   });
 });

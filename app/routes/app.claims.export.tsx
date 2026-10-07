@@ -14,7 +14,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       controller.enqueue(
         enc.encode(
           "﻿" +
-            csvRow(["email", "customer_id", "campaign", "discount_code", "claimed_at", "email_status"]),
+            csvRow(["email", "customer_id", "campaign", "discount_code", "claimed_at", "email_status", "email_eligibility"]),
         ),
       );
       for await (const batch of claimRepository.exportBatches(shop)) {
@@ -29,6 +29,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
                   c.discountCode,
                   c.claimedAt.toISOString(),
                   c.emailStatus,
+                  c.emailEligibility,
                 ]),
               )
               .join(""),

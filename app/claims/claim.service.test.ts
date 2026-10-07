@@ -16,52 +16,73 @@ import {
   InvalidEmailError,
   type CustomerGateway,
   type DiscountCodeGateway,
-  type FlowGateway,
+  type EmailEligibility,
 } from "./types";
 
 const shop = `claim-test-${Date.now()}.myshopify.com`;
 const DISCOUNT_ID = "gid://shopify/DiscountCodeNode/1";
+const CUSTOMER_ID = "gid://shopify/Customer/1";
 const CLAIM_CODE = /^WELCOME10-[A-Z2-9]{8}$/;
 let campaignId: string;
 
 const content = {
-  successMessage: "Your 10% welcome offer is on its way! Check your inbox for your discount code.",
+  successMessage: "Check your inbox for your 10% welcome offer.",
   alreadyClaimedMessage:
     "You’ve already claimed your welcome offer. Please check your previous email for your discount code.",
-  notEligibleMessage:
-    "This welcome offer is for first-time customers only, so it can’t be applied to your account.",
+  notEligibleMessage: "This welcome offer is available for first-time customers only.",
 };
+
+type Hook = () => Promise<unknown> | unknown;
 
 function build(
   overrides: {
-    flow?: FlowGateway["triggerWelcomeOfferClaimed"];
-    issueCode?: DiscountCodeGateway["issueCode"];
-    subscribed?: boolean;
+    issueCode?: Hook;
+    metafields?: Hook;
+    tag?: Hook;
+    eligibility?: EmailEligibility;
+    alreadyTagged?: boolean;
     /** What the first-purchase gate sees; undefined = no Shopify customer for this email yet. */
     existing?: { id: string; hasOrders: boolean };
   } = {},
 ) {
-  const findOrCreate = vi.fn<CustomerGateway["findOrCreate"]>(async () => ({
-    id: "gid://shopify/Customer/1",
-    subscribed: overrides.subscribed ?? true,
-  }));
+  /** Every Shopify write, in the order it happened. */
+  const order: string[] = [];
+  const findOrCreate = vi.fn<CustomerGateway["findOrCreate"]>(async () => {
+    order.push("customer");
+    return {
+      id: CUSTOMER_ID,
+      emailEligibility: overrides.eligibility ?? "SUBSCRIBED",
+      alreadyTagged: overrides.alreadyTagged ?? false,
+    };
+  });
   const findExisting = vi.fn<CustomerGateway["findExisting"]>(async () => overrides.existing ?? null);
-  const issueCode = vi.fn<DiscountCodeGateway["issueCode"]>(overrides.issueCode ?? (async () => undefined));
-  const trigger = vi.fn<FlowGateway["triggerWelcomeOfferClaimed"]>(
-    overrides.flow ?? (async () => undefined),
-  );
-  const writeClaimMetafields = vi.fn<CustomerGateway["writeClaimMetafields"]>(async () => undefined);
+  const issueCode = vi.fn<DiscountCodeGateway["issueCode"]>(async () => {
+    order.push("discount");
+    await overrides.issueCode?.();
+  });
+  const writeClaimMetafields = vi.fn<CustomerGateway["writeClaimMetafields"]>(async () => {
+    order.push("metafields");
+    await overrides.metafields?.();
+  });
+  const addClaimTag = vi.fn<CustomerGateway["addClaimTag"]>(async () => {
+    order.push("tag");
+    await overrides.tag?.();
+  });
   const service = new ClaimService(
-    { findOrCreate, findExisting, writeClaimMetafields },
-    { triggerWelcomeOfferClaimed: trigger },
+    { findOrCreate, findExisting, writeClaimMetafields, addClaimTag },
     { issueCode },
   );
-  return { service, findOrCreate, findExisting, trigger, writeClaimMetafields, issueCode };
+  return { service, order, findOrCreate, findExisting, issueCode, writeClaimMetafields, addClaimTag };
 }
 
 /** Turns the first-purchase gate on for the campaign under test. */
 const requireFirstPurchase = () =>
   db.campaign.update({ where: { id: campaignId }, data: { rules: { firstPurchaseOnly: true } } });
+
+const claims = () => db.welcomeOfferClaim.findMany({ where: { shopDomain: shop } });
+const only = () => db.welcomeOfferClaim.findFirstOrThrow({ where: { shopDomain: shop } });
+const claim = (service: ClaimService, email: string, marketingConsent?: boolean) =>
+  service.claim({ shopDomain: shop, campaignId, email, marketingConsent });
 
 beforeEach(async () => {
   forced.codes = [];
@@ -88,172 +109,277 @@ afterAll(async () => {
   await db.$disconnect();
 });
 
-describe("ClaimService", () => {
-  it("first claim issues its own code, triggers Flow once and stores the claim", async () => {
-    const { service, trigger, writeClaimMetafields, issueCode } = build();
-    const out = await service.claim({ shopDomain: shop, campaignId, email: "  Customer@Example.com " });
-    expect(writeClaimMetafields).toHaveBeenCalledTimes(1);
+describe("ClaimService: new eligible customer", () => {
+  it("creates the claim, customer, code and metafields, then adds the tag last", async () => {
+    const { service, order, issueCode, writeClaimMetafields, addClaimTag } = build();
+    const out = await claim(service, "  Customer@Example.com ");
     expect(out).toEqual({ status: "claimed", message: content.successMessage });
-    expect(trigger).toHaveBeenCalledTimes(1);
-    const rows = await db.welcomeOfferClaim.findMany({ where: { shopDomain: shop } });
-    expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({
+
+    // The tag starts Flow, so everything Flow reads must already exist.
+    expect(order).toEqual(["customer", "discount", "metafields", "tag"]);
+
+    const row = await only();
+    expect(row).toMatchObject({
       emailNormalized: "customer@example.com",
       discountCode: expect.stringMatching(CLAIM_CODE),
-      shopifyCustomerId: "gid://shopify/Customer/1",
-      emailStatus: "TRIGGERED",
+      shopifyCustomerId: CUSTOMER_ID,
+      emailStatus: "READY_FOR_FLOW",
+      emailEligibility: "SUBSCRIBED",
+      failureStep: null,
+      failureReason: null,
     });
-    const code = rows[0].discountCode;
-    expect(issueCode).toHaveBeenCalledWith({ discountId: DISCOUNT_ID, code });
-    expect(trigger.mock.calls[0][0].discountCode).toBe(code);
-    expect(writeClaimMetafields.mock.calls[0][0].discountCode).toBe(code);
+    expect(row.flowHandoffAt).not.toBeNull();
+    expect(issueCode).toHaveBeenCalledWith({ discountId: DISCOUNT_ID, code: row.discountCode });
+    expect(writeClaimMetafields).toHaveBeenCalledWith({
+      customerId: CUSTOMER_ID,
+      discountCode: row.discountCode,
+      claimedAt: row.claimedAt,
+      campaignId,
+      claimId: row.id,
+    });
+    expect(addClaimTag).toHaveBeenCalledWith({ customerId: CUSTOMER_ID });
   });
 
   it("every claim gets a different code", async () => {
     const { service } = build();
-    await service.claim({ shopDomain: shop, campaignId, email: "one@example.com" });
-    await service.claim({ shopDomain: shop, campaignId, email: "two@example.com" });
-    const codes = (await db.welcomeOfferClaim.findMany({ where: { shopDomain: shop } })).map((r) => r.discountCode);
+    await claim(service, "one@example.com");
+    await claim(service, "two@example.com");
+    const codes = (await claims()).map((r) => r.discountCode);
     expect(new Set(codes).size).toBe(2);
   });
 
-  it("an opted-out customer still triggers Flow but is marked NOT_SUBSCRIBED", async () => {
-    const { service, trigger } = build({ subscribed: false });
-    const out = await service.claim({ shopDomain: shop, campaignId, email: "optout@example.com" });
-    expect(out.status).toBe("claimed");
-    expect(trigger).toHaveBeenCalledTimes(1);
-    const row = await db.welcomeOfferClaim.findFirstOrThrow({ where: { shopDomain: shop } });
-    expect(row.emailStatus).toBe("NOT_SUBSCRIBED");
-    expect(row.flowTriggeredAt).not.toBeNull();
-
-    // Flow already fired, so a resubmission is not retried.
-    const again = await service.claim({ shopDomain: shop, campaignId, email: "optout@example.com" });
-    expect(again.status).toBe("already_claimed");
-    expect(trigger).toHaveBeenCalledTimes(1);
+  it("a customer who is not subscribed still gets a valid claim, flagged for the admin", async () => {
+    const { service, addClaimTag } = build({ eligibility: "NOT_SUBSCRIBED" });
+    expect((await claim(service, "optout@example.com")).status).toBe("claimed");
+    expect(addClaimTag).toHaveBeenCalledTimes(1);
+    expect(await only()).toMatchObject({ emailStatus: "READY_FOR_FLOW", emailEligibility: "NOT_SUBSCRIBED" });
+    // Delivery eligibility never reopens the claim.
+    expect((await claim(service, "optout@example.com")).status).toBe("already_claimed");
+    expect(addClaimTag).toHaveBeenCalledTimes(1);
   });
 
-  it("a failed code issue skips Flow and the retry reuses the same code", async () => {
-    let fail = true;
-    const { service, trigger, issueCode } = build({
-      issueCode: async () => {
-        if (fail) throw new Error("discounts down");
-      },
-    });
-    await expect(service.claim({ shopDomain: shop, campaignId, email: "y@example.com" })).rejects.toThrow();
-    expect(trigger).not.toHaveBeenCalled();
-    const row = await db.welcomeOfferClaim.findFirstOrThrow({ where: { shopDomain: shop } });
-    expect(row.emailStatus).toBe("FAILED");
-
-    fail = false;
-    const out = await service.claim({ shopDomain: shop, campaignId, email: "y@example.com" });
-    expect(out.status).toBe("claimed");
-    expect(issueCode).toHaveBeenLastCalledWith({ discountId: DISCOUNT_ID, code: row.discountCode });
-    expect(trigger.mock.calls[0][0].discountCode).toBe(row.discountCode);
+  it("records unknown consent as UNKNOWN rather than guessing", async () => {
+    const { service } = build({ eligibility: "UNKNOWN" });
+    await claim(service, "who@example.com");
+    expect((await only()).emailEligibility).toBe("UNKNOWN");
   });
 
-  it("records which step failed and why, and clears it when the retry succeeds", async () => {
-    let fail = true;
-    const { service } = build({
-      flow: async () => {
-        if (fail) throw new Error("flowTriggerReceive failed: no workflow");
-      },
-    });
-    await expect(service.claim({ shopDomain: shop, campaignId, email: "why@example.com" })).rejects.toThrow();
-    const failed = await db.welcomeOfferClaim.findFirstOrThrow({ where: { shopDomain: shop } });
-    expect(failed).toMatchObject({
-      emailStatus: "FAILED",
-      failureStep: "flow",
-      failureReason: "flowTriggerReceive failed: no workflow",
-    });
-
-    fail = false;
-    await service.claim({ shopDomain: shop, campaignId, email: "why@example.com" });
-    const ok = await db.welcomeOfferClaim.findFirstOrThrow({ where: { shopDomain: shop } });
-    expect(ok).toMatchObject({ emailStatus: "TRIGGERED", failureStep: null, failureReason: null });
+  it("stores the popup's explicit marketing consent, and defaults to none", async () => {
+    const { service, findOrCreate } = build();
+    await claim(service, "yes@example.com", true);
+    await claim(service, "no@example.com");
+    expect(findOrCreate).toHaveBeenNthCalledWith(1, { email: "yes@example.com", marketingConsent: true });
+    expect(findOrCreate).toHaveBeenNthCalledWith(2, { email: "no@example.com", marketingConsent: false });
+    const rows = await claims();
+    expect(rows.find((r) => r.emailNormalized === "yes@example.com")?.marketingConsent).toBe(true);
+    expect(rows.find((r) => r.emailNormalized === "no@example.com")?.marketingConsent).toBe(false);
   });
+});
 
-  it("records the customer and discount steps too", async () => {
-    const a = build({ issueCode: async () => { throw new Error("discount gone"); } });
-    await expect(a.service.claim({ shopDomain: shop, campaignId, email: "d@example.com" })).rejects.toThrow();
-    expect(
-      (await db.welcomeOfferClaim.findFirstOrThrow({ where: { shopDomain: shop, emailNormalized: "d@example.com" } })).failureStep,
-    ).toBe("discount");
-  });
-
-  it("same email (any casing) is already_claimed: no Flow, no new row", async () => {
-    const { service, trigger, findOrCreate, writeClaimMetafields } = build();
-    await service.claim({ shopDomain: shop, campaignId, email: "a@b.co" });
-    const out = await service.claim({ shopDomain: shop, campaignId, email: " A@B.CO" });
-    expect(out).toEqual({ status: "already_claimed", message: content.alreadyClaimedMessage });
-    expect(trigger).toHaveBeenCalledTimes(1);
+describe("ClaimService: duplicate protection", () => {
+  it("same email (any casing or padding) is already_claimed: no second code, tag or customer lookup", async () => {
+    const { service, addClaimTag, issueCode, findOrCreate, writeClaimMetafields } = build();
+    await claim(service, "a@b.co");
+    for (const email of [" A@B.CO", "a@B.co ", "A@b.Co"]) {
+      expect(await claim(service, email)).toEqual({
+        status: "already_claimed",
+        message: content.alreadyClaimedMessage,
+      });
+    }
+    expect(addClaimTag).toHaveBeenCalledTimes(1);
+    expect(issueCode).toHaveBeenCalledTimes(1);
     expect(findOrCreate).toHaveBeenCalledTimes(1);
     expect(writeClaimMetafields).toHaveBeenCalledTimes(1);
     expect(await db.welcomeOfferClaim.count({ where: { shopDomain: shop } })).toBe(1);
   });
 
-  it("25 concurrent submissions produce exactly one claim and one Flow trigger", async () => {
-    const { service, trigger } = build({
-      flow: () => new Promise((r) => setTimeout(r, 50)),
-    });
-    const results = await Promise.all(
-      Array.from({ length: 25 }, () =>
-        service.claim({ shopDomain: shop, campaignId, email: "race@example.com" }),
-      ),
-    );
+  it("25 concurrent submissions produce one claim, one code and one tag", async () => {
+    const { service, addClaimTag, issueCode } = build({ tag: () => new Promise((r) => setTimeout(r, 50)) });
+    const results = await Promise.all(Array.from({ length: 25 }, () => claim(service, "race@example.com")));
     expect(results.filter((r) => r.status === "claimed")).toHaveLength(1);
     expect(results.filter((r) => r.status === "already_claimed")).toHaveLength(24);
-    expect(trigger).toHaveBeenCalledTimes(1);
+    expect(addClaimTag).toHaveBeenCalledTimes(1);
+    expect(issueCode).toHaveBeenCalledTimes(1);
+    expect(await db.welcomeOfferClaim.count({ where: { shopDomain: shop } })).toBe(1);
+  });
+
+  it("concurrent case variants of one email still make one claim", async () => {
+    const { service, addClaimTag } = build({ tag: () => new Promise((r) => setTimeout(r, 30)) });
+    const emails = ["Mix@Example.com", "mix@example.com", " MIX@EXAMPLE.COM", "mix@example.com "];
+    const results = await Promise.all(emails.map((e) => claim(service, e)));
+    expect(results.filter((r) => r.status === "claimed")).toHaveLength(1);
+    expect(addClaimTag).toHaveBeenCalledTimes(1);
     expect(await db.welcomeOfferClaim.count({ where: { shopDomain: shop } })).toBe(1);
   });
 
   it("a different email can still claim", async () => {
-    const { service, trigger } = build();
-    await service.claim({ shopDomain: shop, campaignId, email: "one@example.com" });
-    const out = await service.claim({ shopDomain: shop, campaignId, email: "two@example.com" });
-    expect(out.status).toBe("claimed");
-    expect(trigger).toHaveBeenCalledTimes(2);
+    const { service, addClaimTag } = build();
+    await claim(service, "one@example.com");
+    expect((await claim(service, "two@example.com")).status).toBe("claimed");
+    expect(addClaimTag).toHaveBeenCalledTimes(2);
   });
 
-  it("failed fulfilment (Flow never triggered) can be retried exactly once", async () => {
-    let fail = true;
-    const { service, trigger } = build({
-      flow: async () => {
-        if (fail) throw new Error("flow down");
+  it("a claim settled by the old Flow trigger is never fulfilled again", async () => {
+    const { service, findOrCreate, addClaimTag } = build();
+    await db.welcomeOfferClaim.create({
+      data: {
+        shopDomain: shop,
+        campaignId,
+        emailNormalized: "legacy@example.com",
+        discountCode: "WELCOME10-LEGACY22",
+        emailStatus: "FAILED",
+        flowTriggeredAt: new Date(),
       },
     });
-    await expect(service.claim({ shopDomain: shop, campaignId, email: "x@example.com" })).rejects.toThrow();
-    expect((await db.welcomeOfferClaim.findFirstOrThrow({ where: { shopDomain: shop } })).emailStatus).toBe("FAILED");
+    expect((await claim(service, "legacy@example.com")).status).toBe("already_claimed");
+    expect(findOrCreate).not.toHaveBeenCalled();
+    expect(addClaimTag).not.toHaveBeenCalled();
+  });
+});
+
+describe("ClaimService: Shopify failures and retry", () => {
+  it("a failed code issue stops before metafields and the tag, and records the step", async () => {
+    const { service, writeClaimMetafields, addClaimTag } = build({
+      issueCode: () => {
+        throw new Error("discounts down");
+      },
+    });
+    await expect(claim(service, "y@example.com")).rejects.toThrow("discounts down");
+    expect(writeClaimMetafields).not.toHaveBeenCalled();
+    expect(addClaimTag).not.toHaveBeenCalled();
+    expect(await only()).toMatchObject({
+      emailStatus: "FAILED",
+      failureStep: "discount",
+      failureReason: "discounts down",
+      flowHandoffAt: null,
+    });
+  });
+
+  it("a customer failure is recorded and nothing else runs", async () => {
+    const { service, findOrCreate, issueCode } = build();
+    findOrCreate.mockRejectedValueOnce(new Error("customers down"));
+    await expect(claim(service, "c@example.com")).rejects.toThrow();
+    expect(issueCode).not.toHaveBeenCalled();
+    expect((await only()).failureStep).toBe("customer");
+  });
+
+  it("a metafield failure keeps the code, adds NO tag, and the retry reuses the same code", async () => {
+    let fail = true;
+    const { service, order, issueCode, addClaimTag } = build({
+      metafields: () => {
+        if (fail) throw new Error("metafieldsSet failed: bad value");
+      },
+    });
+    await expect(claim(service, "m@example.com")).rejects.toThrow();
+    expect(addClaimTag).not.toHaveBeenCalled();
+    const failed = await only();
+    expect(failed).toMatchObject({ emailStatus: "FAILED", failureStep: "metafields", flowHandoffAt: null });
 
     fail = false;
-    const results = await Promise.all(
-      Array.from({ length: 5 }, () => service.claim({ shopDomain: shop, campaignId, email: "x@example.com" })),
-    );
+    order.length = 0;
+    expect((await claim(service, "m@example.com")).status).toBe("claimed");
+    expect(issueCode).toHaveBeenLastCalledWith({ discountId: DISCOUNT_ID, code: failed.discountCode });
+    expect(order).toEqual(["customer", "discount", "metafields", "tag"]);
+    const ok = await only();
+    expect(ok.discountCode).toBe(failed.discountCode);
+    expect(ok).toMatchObject({ emailStatus: "READY_FOR_FLOW", failureStep: null, failureReason: null });
+    expect(await db.welcomeOfferClaim.count({ where: { shopDomain: shop } })).toBe(1);
+    expect(addClaimTag).toHaveBeenCalledTimes(1);
+  });
+
+  it("a tag failure keeps the code and metafields, and the retry completes with the same code", async () => {
+    let fail = true;
+    const { service, writeClaimMetafields, issueCode, addClaimTag } = build({
+      tag: () => {
+        if (fail) throw new Error("tagsAdd failed");
+      },
+    });
+    await expect(claim(service, "t@example.com")).rejects.toThrow();
+    const failed = await only();
+    expect(failed).toMatchObject({ emailStatus: "FAILED", failureStep: "tag", flowHandoffAt: null });
+    expect(writeClaimMetafields).toHaveBeenCalledTimes(1);
+
+    fail = false;
+    expect((await claim(service, "t@example.com")).status).toBe("claimed");
+    expect(addClaimTag).toHaveBeenCalledTimes(2);
+    // The same code both times: no second code was ever created.
+    expect(issueCode.mock.calls.map(([a]) => a.code)).toEqual([failed.discountCode, failed.discountCode]);
+    const ok = await only();
+    expect(ok.discountCode).toBe(failed.discountCode);
+    expect(ok.flowHandoffAt).not.toBeNull();
+  });
+
+  it("a customer who already has the tag still completes (tagsAdd is a no-op)", async () => {
+    const { service, addClaimTag } = build({ alreadyTagged: true });
+    expect((await claim(service, "tagged@example.com")).status).toBe("claimed");
+    expect(addClaimTag).toHaveBeenCalledTimes(1);
+    expect((await only()).emailStatus).toBe("READY_FOR_FLOW");
+  });
+
+  it("a lost response after everything succeeded is retried with identical, idempotent writes", async () => {
+    let lose = true;
+    const { service, order, writeClaimMetafields, addClaimTag } = build({
+      // The tag really lands in Shopify, but the response never reaches the app.
+      tag: () => {
+        if (lose) throw new Error("socket hang up");
+      },
+    });
+    await expect(claim(service, "lost@example.com")).rejects.toThrow("socket hang up");
+    expect(order).toEqual(["customer", "discount", "metafields", "tag"]);
+
+    lose = false;
+    expect((await claim(service, "lost@example.com")).status).toBe("claimed");
+
+    // Same payload both times, so the upserts change nothing.
+    expect(writeClaimMetafields.mock.calls[0][0]).toEqual(writeClaimMetafields.mock.calls[1][0]);
+    expect(addClaimTag.mock.calls[0][0]).toEqual(addClaimTag.mock.calls[1][0]);
+    expect(await db.welcomeOfferClaim.count({ where: { shopDomain: shop } })).toBe(1);
+    expect((await only()).emailStatus).toBe("READY_FOR_FLOW");
+  });
+
+  it("a retry reuses the consent given at the original submission", async () => {
+    let fail = true;
+    const { service, findOrCreate } = build({
+      issueCode: () => {
+        if (fail) throw new Error("down");
+      },
+    });
+    await expect(claim(service, "consent@example.com", true)).rejects.toThrow();
+    fail = false;
+    // The retry arrives without the checkbox (e.g. the admin "Retry" button).
+    await claim(service, "consent@example.com", false);
+    expect(findOrCreate).toHaveBeenLastCalledWith({ email: "consent@example.com", marketingConsent: true });
+  });
+
+  it("a failed claim can be retried exactly once even under concurrency", async () => {
+    let fail = true;
+    const { service, addClaimTag } = build({
+      tag: () => {
+        if (fail) throw new Error("tag down");
+      },
+    });
+    await expect(claim(service, "x@example.com")).rejects.toThrow();
+    expect((await only()).emailStatus).toBe("FAILED");
+
+    fail = false;
+    const results = await Promise.all(Array.from({ length: 5 }, () => claim(service, "x@example.com")));
     expect(results.filter((r) => r.status === "claimed")).toHaveLength(1);
-    expect(trigger).toHaveBeenCalledTimes(2); // 1 failed + 1 successful retry
+    expect(addClaimTag).toHaveBeenCalledTimes(2); // 1 failed + 1 successful retry
     expect(await db.welcomeOfferClaim.count({ where: { shopDomain: shop } })).toBe(1);
 
-    const again = await service.claim({ shopDomain: shop, campaignId, email: "x@example.com" });
-    expect(again.status).toBe("already_claimed");
-    expect(trigger).toHaveBeenCalledTimes(2);
+    expect((await claim(service, "x@example.com")).status).toBe("already_claimed");
+    expect(addClaimTag).toHaveBeenCalledTimes(2);
   });
 
-  it("rejects invalid emails and inactive campaigns", async () => {
-    const { service } = build();
-    await expect(service.claim({ shopDomain: shop, campaignId, email: "nope" })).rejects.toBeInstanceOf(InvalidEmailError);
-    await db.campaign.update({ where: { id: campaignId }, data: { status: "DISABLED" } });
-    await expect(service.claim({ shopDomain: shop, campaignId, email: "ok@example.com" })).rejects.toThrow();
-  });
-
-  it("a duplicate code is regenerated, not mistaken for an already-claimed email", async () => {
-    const { service, trigger } = build();
-    await service.claim({ shopDomain: shop, campaignId, email: "first@example.com" });
-    const taken = (await db.welcomeOfferClaim.findFirstOrThrow({ where: { shopDomain: shop } })).discountCode;
+  it("a duplicate code is regenerated on the initial claim, not mistaken for an already-claimed email", async () => {
+    const { service, addClaimTag } = build();
+    await claim(service, "first@example.com");
+    const taken = (await only()).discountCode;
 
     // The next claim's first generated suffix collides with the code already issued.
     forced.codes = [taken];
-    const out = await service.claim({ shopDomain: shop, campaignId, email: "second@example.com" });
-    expect(out.status).toBe("claimed");
-    expect(trigger).toHaveBeenCalledTimes(2);
+    expect((await claim(service, "second@example.com")).status).toBe("claimed");
+    expect(addClaimTag).toHaveBeenCalledTimes(2);
 
     const second = await db.welcomeOfferClaim.findFirstOrThrow({
       where: { shopDomain: shop, emailNormalized: "second@example.com" },
@@ -264,8 +390,8 @@ describe("ClaimService", () => {
 
   it("the database rejects two claims sharing a code in one shop, but allows it across shops", async () => {
     const { service } = build();
-    await service.claim({ shopDomain: shop, campaignId, email: "owner@example.com" });
-    const row = await db.welcomeOfferClaim.findFirstOrThrow({ where: { shopDomain: shop } });
+    await claim(service, "owner@example.com");
+    const row = await only();
 
     await expect(
       db.welcomeOfferClaim.create({
@@ -280,109 +406,20 @@ describe("ClaimService", () => {
     });
     await expect(
       db.welcomeOfferClaim.create({
-        data: {
-          shopDomain: otherShop,
-          campaignId: sibling.id,
-          emailNormalized: "other@example.com",
-          discountCode: row.discountCode,
-        },
+        data: { shopDomain: otherShop, campaignId: sibling.id, emailNormalized: "other@example.com", discountCode: row.discountCode },
       }),
     ).resolves.toBeTruthy();
     await db.welcomeOfferClaim.deleteMany({ where: { shopDomain: otherShop } });
     await db.campaign.deleteMany({ where: { shopDomain: otherShop } });
   });
+});
 
-  it("a returning customer can claim while first-purchase eligibility is off", async () => {
-    // Default rules: the only gate is one claim per email, so order history is never read.
-    const { service, findExisting } = build({ existing: { id: "gid://shopify/Customer/99", hasOrders: true } });
-    const out = await service.claim({ shopDomain: shop, campaignId, email: "regular@example.com" });
-    expect(out.status).toBe("claimed");
-    expect(findExisting).not.toHaveBeenCalled();
-  });
-
-  describe("first-purchase eligibility", () => {
-    it("refuses a customer who already has an order, issuing nothing", async () => {
-      await requireFirstPurchase();
-      const { service, trigger, findOrCreate, issueCode } = build({
-        existing: { id: "gid://shopify/Customer/99", hasOrders: true },
-      });
-      const out = await service.claim({ shopDomain: shop, campaignId, email: "regular@example.com" });
-      expect(out).toEqual({
-        status: "not_eligible",
-        message: content.notEligibleMessage,
-      });
-      // No claim row, no code and no email: the offer was never issued.
-      expect(await db.welcomeOfferClaim.count({ where: { shopDomain: shop } })).toBe(0);
-      expect(findOrCreate).not.toHaveBeenCalled();
-      expect(issueCode).not.toHaveBeenCalled();
-      expect(trigger).not.toHaveBeenCalled();
-    });
-
-    it("lets an existing customer with no orders claim", async () => {
-      await requireFirstPurchase();
-      const { service, trigger } = build({ existing: { id: "gid://shopify/Customer/5", hasOrders: false } });
-      const out = await service.claim({ shopDomain: shop, campaignId, email: "browser@example.com" });
-      expect(out.status).toBe("claimed");
-      expect(trigger).toHaveBeenCalledTimes(1);
-    });
-
-    it("lets a brand new email claim when Shopify has no customer for it", async () => {
-      await requireFirstPurchase();
-      const { service, findExisting } = build();
-      const out = await service.claim({ shopDomain: shop, campaignId, email: "brand@new.com" });
-      expect(out.status).toBe("claimed");
-      expect(findExisting).toHaveBeenCalledWith({ email: "brand@new.com" });
-    });
-
-    it("refuses an ineligible email no matter the casing or padding", async () => {
-      await requireFirstPurchase();
-      const { service } = build({ existing: { id: "gid://shopify/Customer/99", hasOrders: true } });
-      for (const email of ["Regular@Example.com", " REGULAR@EXAMPLE.COM "]) {
-        expect((await service.claim({ shopDomain: shop, campaignId, email })).status).toBe("not_eligible");
-      }
-      expect(await db.welcomeOfferClaim.count({ where: { shopDomain: shop } })).toBe(0);
-    });
-
-    it("gives every concurrent submission from an ineligible email the same answer", async () => {
-      await requireFirstPurchase();
-      const { service, trigger } = build({ existing: { id: "gid://shopify/Customer/99", hasOrders: true } });
-      const results = await Promise.all(
-        Array.from({ length: 10 }, () =>
-          service.claim({ shopDomain: shop, campaignId, email: "race-regular@example.com" }),
-        ),
-      );
-      expect(results.every((r) => r.status === "not_eligible")).toBe(true);
-      expect(trigger).not.toHaveBeenCalled();
-      expect(await db.welcomeOfferClaim.count({ where: { shopDomain: shop } })).toBe(0);
-    });
-
-    it("does not revoke an existing claim when the customer orders before a retry", async () => {
-      await requireFirstPurchase();
-      let fail = true;
-      const { service, findExisting } = build({
-        flow: async () => {
-          if (fail) throw new Error("flow down");
-        },
-      });
-      await expect(
-        service.claim({ shopDomain: shop, campaignId, email: "ordered@example.com" }),
-      ).rejects.toThrow();
-
-      // The customer completes an order between the failed attempt and the retry.
-      findExisting.mockResolvedValue({ id: "gid://shopify/Customer/7", hasOrders: true });
-      fail = false;
-      const out = await service.claim({ shopDomain: shop, campaignId, email: "ordered@example.com" });
-      expect(out.status).toBe("claimed");
-    });
-
-    it("treats an unreadable order count as ineligible rather than letting it through", async () => {
-      await requireFirstPurchase();
-      // findExisting maps a non-numeric numberOfOrders to hasOrders: true (see customers.server).
-      const { service } = build({ existing: { id: "gid://shopify/Customer/99", hasOrders: true } });
-      expect(
-        (await service.claim({ shopDomain: shop, campaignId, email: "unknown@example.com" })).status,
-      ).toBe("not_eligible");
-    });
+describe("ClaimService: validation", () => {
+  it("rejects invalid emails and inactive campaigns", async () => {
+    const { service } = build();
+    await expect(claim(service, "nope")).rejects.toBeInstanceOf(InvalidEmailError);
+    await db.campaign.update({ where: { id: campaignId }, data: { status: "DISABLED" } });
+    await expect(claim(service, "ok@example.com")).rejects.toThrow();
   });
 
   it("does not claim across shops", async () => {
@@ -390,5 +427,72 @@ describe("ClaimService", () => {
     await expect(
       service.claim({ shopDomain: "other.myshopify.com", campaignId, email: "ok@example.com" }),
     ).rejects.toThrow();
+  });
+});
+
+describe("ClaimService: first-purchase eligibility", () => {
+  it("a returning customer can claim while the rule is off, and order history is never read", async () => {
+    const { service, findExisting } = build({ existing: { id: "gid://shopify/Customer/99", hasOrders: true } });
+    expect((await claim(service, "regular@example.com")).status).toBe("claimed");
+    expect(findExisting).not.toHaveBeenCalled();
+  });
+
+  it("refuses a customer who already has an order: no claim, code, metafields or tag", async () => {
+    await requireFirstPurchase();
+    const { service, order } = build({ existing: { id: "gid://shopify/Customer/99", hasOrders: true } });
+    expect(await claim(service, "regular@example.com")).toEqual({
+      status: "not_eligible",
+      message: content.notEligibleMessage,
+    });
+    expect(order).toEqual([]);
+    expect(await db.welcomeOfferClaim.count({ where: { shopDomain: shop } })).toBe(0);
+  });
+
+  it("lets an existing customer with no orders claim", async () => {
+    await requireFirstPurchase();
+    const { service, addClaimTag } = build({ existing: { id: "gid://shopify/Customer/5", hasOrders: false } });
+    expect((await claim(service, "browser@example.com")).status).toBe("claimed");
+    expect(addClaimTag).toHaveBeenCalledTimes(1);
+  });
+
+  it("lets a brand new email claim when Shopify has no customer for it", async () => {
+    await requireFirstPurchase();
+    const { service, findExisting } = build();
+    expect((await claim(service, "brand@new.com")).status).toBe("claimed");
+    expect(findExisting).toHaveBeenCalledWith({ email: "brand@new.com" });
+  });
+
+  it("refuses an ineligible email whatever the casing or padding", async () => {
+    await requireFirstPurchase();
+    const { service } = build({ existing: { id: "gid://shopify/Customer/99", hasOrders: true } });
+    for (const email of ["Regular@Example.com", " REGULAR@EXAMPLE.COM "]) {
+      expect((await claim(service, email)).status).toBe("not_eligible");
+    }
+    expect(await db.welcomeOfferClaim.count({ where: { shopDomain: shop } })).toBe(0);
+  });
+
+  it("gives every concurrent submission from an ineligible email the same answer", async () => {
+    await requireFirstPurchase();
+    const { service, addClaimTag } = build({ existing: { id: "gid://shopify/Customer/99", hasOrders: true } });
+    const results = await Promise.all(Array.from({ length: 10 }, () => claim(service, "race-regular@example.com")));
+    expect(results.every((r) => r.status === "not_eligible")).toBe(true);
+    expect(addClaimTag).not.toHaveBeenCalled();
+    expect(await db.welcomeOfferClaim.count({ where: { shopDomain: shop } })).toBe(0);
+  });
+
+  it("does not revoke an existing claim when the customer orders before a retry", async () => {
+    await requireFirstPurchase();
+    let fail = true;
+    const { service, findExisting } = build({
+      tag: () => {
+        if (fail) throw new Error("tag down");
+      },
+    });
+    await expect(claim(service, "ordered@example.com")).rejects.toThrow();
+
+    // The customer completes an order between the failed attempt and the retry.
+    findExisting.mockResolvedValue({ id: "gid://shopify/Customer/7", hasOrders: true });
+    fail = false;
+    expect((await claim(service, "ordered@example.com")).status).toBe("claimed");
   });
 });

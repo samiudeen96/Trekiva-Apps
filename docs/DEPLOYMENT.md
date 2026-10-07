@@ -41,9 +41,9 @@ Edit `shopify.app.toml` with the real values (from the project directory, on you
 - `[auth] redirect_urls = ["https://trekiva-app.example.com/auth/callback"]`
 - `[app_proxy] url = "https://trekiva-app.example.com/api/public"` (subpath `trekiva`, prefix `apps`)
 
-Then `shopify app deploy`. This registers webhooks, the app proxy, the **Welcome Offer Claimed** Flow trigger and the theme app extension. If deploy rejects the Flow trigger field keys, adjust them in `extensions/welcome-offer-flow-trigger/shopify.extension.toml` and `app/flow/flow.server.ts` together.
+Then `shopify app deploy`. This registers webhooks (including `customers/update`, which needs Protected Customer Data access), the app proxy and the theme app extension. It also removes the old **Welcome Offer Claimed** Flow trigger, which is no longer used. Then run `npx prisma migrate deploy` (additive migration `flow_handoff_via_tags`).
 
-**Plan requirement:** a custom-distribution app's Flow trigger is only visible on a Shopify Plus store. Otherwise switch the app to public distribution in the Dev Dashboard (irreversible).
+No Shopify Plus requirement: the workflow starts from Flow's native **Customer tags added** trigger.
 
 ## 4. Merchant setup (once per store)
 1. Install the app. Open **Settings**: every row should be OK (Flow shows "No trigger fired yet" until the first claim).
@@ -67,12 +67,13 @@ Then `shopify app deploy`. This registers webhooks, the app proxy, the **Welcome
 
    Use the segment alone and returning customers get a dead code by email; use the app rule alone and a
    customer who orders between claiming and checkout can still redeem. Turning both on covers each gap.
-5. Shopify Flow: create a workflow with trigger **Welcome Offer Claimed** → action **Send marketing email** (Shopify Email), using the Discount code variable. Turn it on.
-6. Create a campaign, select the discount, set status **Active**, save.
-7. Test with a fresh email: expect the success message and an email with a unique code (e.g. `WELCOME10-7KQ2M9XH`). Submit again: expect "Already claimed" and no second email.
+5. **Settings → Create metafield definitions** (or add the five `trekiva.*` customer metafields under Settings → Custom data).
+6. Shopify Flow: create a workflow with trigger **Customer tags added** → condition tags contain `trekiva_welcome_claimed` → action **Send marketing email** (use the customer metafield `trekiva.welcome_discount_code`) → action **Add customer tags** `trekiva_welcome_email_sent`. Turn it on. Send yourself a test first: Shopify does not document that Shopify Email can render customer metafields.
+7. Create a campaign, select the discount, set status **Active**, save.
+8. Test with a fresh email and **tick the marketing checkbox**: expect the success message and an email with a unique code (e.g. `WELCOME10-7KQ2M9XH`). Submit again: expect "Already claimed" and no second email. Without the checkbox the claim and code are valid, but Shopify Email will not send to an unsubscribed customer.
 
 ## 5. Operations
-- Failed claims: **Settings** shows why each one failed (customer, discount or Flow step) and has a **Retry failed claims** button. It also checks that every active campaign's Shopify discount still exists and is live.
+- Failed claims: **Settings** shows why each one failed (customer, discount, metafields or tag step) and has a **Retry failed claims** button. It also checks that every active campaign's Shopify discount still exists and is live.
 - Health: `GET /healthz` (checks the database). Docker marks `trekiva-app` unhealthy if it fails.
 - Logs: `docker compose logs -f trekiva-app` (JSON; tokens and emails are redacted).
 - Backups: `deploy/backup.sh` (cron daily; keeps 14 days). Restore: `gunzip -c backups/<file> | docker compose exec -T postgres psql -U $POSTGRES_USER -d $POSTGRES_DB`.
@@ -81,4 +82,4 @@ Then `shopify app deploy`. This registers webhooks, the app proxy, the **Welcome
 
 ## 6. Known limits
 - The rate limiter is in memory, so run a single app instance.
-- Claims stay at `TRIGGERED`; Flow cannot report that Shopify Email actually sent the message.
+- `EMAIL_SENT` means Flow ran its email action and added `trekiva_welcome_email_sent`; it cannot prove Shopify Email delivered the message.

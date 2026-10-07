@@ -1,5 +1,6 @@
 import db from "../db.server";
 import type { AdminGraphqlClient } from "../discounts/types";
+import { missingMetafieldDefinitions } from "../shopify/handoff.server";
 import { env } from "./env.server";
 
 export interface Check {
@@ -90,4 +91,40 @@ export async function checkCampaignDiscounts(
   return problems.length
     ? { ok: false, detail: problems.join(". ") }
     : { ok: true, detail: `${campaigns.length} active campaign(s): discount is live` };
+}
+
+/**
+ * The app writes customer metafields and tags and adds discount codes, all of which need a write
+ * scope. Shopify has no read-only probe for these, and a test write on a real customer on every
+ * page load would have side effects, so the grant itself is what is checked.
+ */
+export function checkWriteAccess(grantedScope: string | undefined): {
+  customers: Check;
+  discounts: Check;
+} {
+  const need = (scope: string, ok: string, bad: string): Check =>
+    missingScopes([scope], grantedScope).length ? { ok: false, detail: bad } : { ok: true, detail: ok };
+  return {
+    customers: need(
+      "write_customers",
+      "write_customers granted: Trekiva can find or create customers, write metafields and add the Flow tag",
+      "write_customers is missing, so customers, metafields and the Flow tag cannot be written. Re-approve the app.",
+    ),
+    discounts: need(
+      "write_discounts",
+      "write_discounts granted: Trekiva can add each claim's code to your discount",
+      "write_discounts is missing, so claim codes cannot be added. Re-approve the app.",
+    ),
+  };
+}
+
+export async function checkMetafieldDefinitions(admin: AdminGraphqlClient): Promise<Check & { missing: string[] }> {
+  try {
+    const missing = await missingMetafieldDefinitions(admin);
+    return missing.length
+      ? { ok: false, missing, detail: `Missing definitions for trekiva.${missing.join(", trekiva.")}. Use "Create metafield definitions" below.` }
+      : { ok: true, missing, detail: "All trekiva.* customer metafield definitions exist" };
+  } catch {
+    return { ok: false, missing: [], detail: "Could not read metafield definitions from Shopify" };
+  }
 }

@@ -47,11 +47,25 @@ enum PopupTemplate {
 
 enum EmailStatus {
   PENDING
+  // Legacy: the custom "Welcome Offer Claimed" Flow trigger fired. No longer written.
   TRIGGERED
+  // Legacy: no longer written.
   SENT
   FAILED
-  // Flow fired, but the customer opted out of email marketing, so Shopify Email will not deliver.
+  // Legacy: replaced by emailEligibility. No longer written.
   NOT_SUBSCRIBED
+  // Customer, code, metafields and the trekiva_welcome_claimed tag all exist: Shopify Flow owns delivery now.
+  READY_FOR_FLOW
+  // Flow added trekiva_welcome_email_sent (Flow ran its email action).
+  EMAIL_SENT
+}
+
+// Whether Shopify Email may send marketing email to this customer. Separate from the claim itself:
+// an unsubscribed customer still holds a valid code.
+enum EmailEligibility {
+  SUBSCRIBED
+  NOT_SUBSCRIBED
+  UNKNOWN
 }
 
 model Campaign {
@@ -90,10 +104,16 @@ model WelcomeOfferClaim {
   // This claim's own code, added to the campaign's Shopify discount.
   discountCode      String      @map("discount_code")
   claimedAt         DateTime    @default(now()) @map("claimed_at")
+  // Legacy (custom Flow trigger). Read only so claims settled before the tag handoff stay settled.
   flowTriggeredAt   DateTime?   @map("flow_triggered_at")
+  // Set once customer, code, metafields and tag exist. The point of no return: a claim past it is never retried.
+  flowHandoffAt     DateTime?   @map("flow_handoff_at")
   emailSentAt       DateTime?   @map("email_sent_at")
   emailStatus       EmailStatus @default(PENDING) @map("email_status")
-  // Why the last fulfilment attempt failed (customer | discount | flow). Cleared on success.
+  emailEligibility  EmailEligibility @default(UNKNOWN) @map("email_eligibility")
+  // The popup's explicit marketing checkbox, kept so a retry reuses the original consent.
+  marketingConsent  Boolean     @default(false) @map("marketing_consent")
+  // Why the last fulfilment attempt failed (customer | discount | metafields | tag). Cleared on success.
   failureStep       String?     @map("failure_step")
   failureReason     String?     @map("failure_reason")
   createdAt         DateTime    @default(now()) @map("created_at")
@@ -108,5 +128,6 @@ model WelcomeOfferClaim {
   @@unique([shopDomain, discountCode], map: "welcome_offer_claims_unique_code_per_shop")
   @@index([shopDomain, claimedAt])
   @@index([campaignId])
+  @@index([shopDomain, shopifyCustomerId])
   @@map("welcome_offer_claims")
 }

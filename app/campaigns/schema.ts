@@ -9,6 +9,7 @@ export const contentSchema = z.object({
   description: optionalText(400),
   emailPlaceholder: text(60),
   buttonText: text(40),
+  consentLabel: text(120),
   successTitle: text(120),
   successMessage: text(400),
   alreadyClaimedTitle: text(120),

@@ -21,6 +21,12 @@ api_version = "2026-10"
   topics = [ "app/scopes_update" ]
   uri = "/webhooks/app/scopes_update"
 
+  # Keeps a claim's "Email sent" status in step with the trekiva_welcome_email_sent tag Flow adds.
+  # Handled by: /app/routes/webhooks.customers.update.tsx
+  [[webhooks.subscriptions]]
+  uri = "/webhooks/customers/update"
+  topics = ["customers/update"]
+
   # Mandatory compliance topic for public apps only
   # See: https://shopify.dev/docs/apps/build/privacy-law-compliance
   [[webhooks.subscriptions]]

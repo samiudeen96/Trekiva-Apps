@@ -71,6 +71,32 @@ export const claimRepository = {
     });
   },
 
+  /** True when this customer has a claim waiting for Flow, so the webhook can skip everyone else. */
+  async hasPendingHandoff(shopDomain: string, shopifyCustomerId: string) {
+    const row = await db.welcomeOfferClaim.findFirst({
+      where: { shopDomain, shopifyCustomerId, emailStatus: "READY_FOR_FLOW" },
+      select: { id: true },
+    });
+    return row !== null;
+  },
+
+  /**
+   * Flow added the email-sent tag. Claims for customers Shopify Email will not deliver to stay
+   * READY_FOR_FLOW (shown as Not subscribed), because Flow tags them even when the email is skipped.
+   */
+  async markEmailSent(shopDomain: string, shopifyCustomerId: string) {
+    const { count } = await db.welcomeOfferClaim.updateMany({
+      where: {
+        shopDomain,
+        shopifyCustomerId,
+        emailStatus: "READY_FOR_FLOW",
+        emailEligibility: { not: "NOT_SUBSCRIBED" },
+      },
+      data: { emailStatus: "EMAIL_SENT", emailSentAt: new Date() },
+    });
+    return count;
+  },
+
   async stats(shopDomain: string) {
     const startOfToday = new Date();
     startOfToday.setHours(0, 0, 0, 0);
@@ -80,9 +106,11 @@ export const claimRepository = {
       db.welcomeOfferClaim.count({ where: { shopDomain, claimedAt: { gte: startOfToday } } }),
       db.welcomeOfferClaim.count({ where: { shopDomain, claimedAt: { gte: weekAgo } } }),
       db.welcomeOfferClaim.count({ where: { shopDomain, emailStatus: "FAILED" } }),
-      db.welcomeOfferClaim.count({ where: { shopDomain, emailStatus: "NOT_SUBSCRIBED" } }),
-      db.welcomeOfferClaim.aggregate({ where: { shopDomain }, _max: { flowTriggeredAt: true } }),
+      db.welcomeOfferClaim.count({
+        where: { shopDomain, OR: [{ emailEligibility: "NOT_SUBSCRIBED" }, { emailStatus: "NOT_SUBSCRIBED" }] },
+      }),
+      db.welcomeOfferClaim.aggregate({ where: { shopDomain }, _max: { flowHandoffAt: true } }),
     ]);
-    return { total, today, last7Days, failed, notSubscribed, lastFlowTriggeredAt: lastTrigger._max.flowTriggeredAt };
+    return { total, today, last7Days, failed, notSubscribed, lastHandoffAt: lastTrigger._max.flowHandoffAt };
   },
 };
