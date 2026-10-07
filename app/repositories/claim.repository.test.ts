@@ -127,3 +127,66 @@ describe("claimRepository: Flow email-sent sync", () => {
     expect(stats.lastHandoffAt).toBeNull();
   });
 });
+
+describe("claimRepository: dashboard numbers", () => {
+  const dashShop = `claims-dash-${Date.now()}.myshopify.com`;
+  const day = (offset: number, hour = 12) => {
+    const d = new Date();
+    d.setUTCHours(hour, 0, 0, 0);
+    d.setUTCDate(d.getUTCDate() - offset);
+    return d;
+  };
+  let campaignId: string;
+
+  beforeAll(async () => {
+    campaignId = (
+      await db.campaign.create({
+        data: { shopDomain: dashShop, name: "D", status: "ACTIVE", discountCode: "W", content: {}, design: {}, rules: {} },
+      })
+    ).id;
+    const mk = (i: number, claimedAt: Date, data: Record<string, unknown> = {}) =>
+      db.welcomeOfferClaim.create({
+        data: { shopDomain: dashShop, campaignId, emailNormalized: `d${i}@x.co`, discountCode: `D-${i}`, claimedAt, ...data },
+      });
+    await mk(1, day(0));
+    await mk(2, day(0, 1));
+    await mk(3, day(2));
+    await mk(4, day(20)); // outside the 14-day chart
+    await mk(5, day(9)); // in the previous 7 days
+    await mk(6, day(1), { emailStatus: "EMAIL_SENT", emailEligibility: "NOT_SUBSCRIBED", delivery: "APP" });
+    await mk(7, day(1), { emailStatus: "READY_FOR_FLOW", emailEligibility: "NOT_SUBSCRIBED" });
+    await db.welcomeOfferClaim.create({
+      data: { shopDomain: `other-${dashShop}`, campaignId, emailNormalized: "z@x.co", discountCode: "Z", claimedAt: day(0) },
+    }).catch(() => undefined);
+  });
+  afterAll(async () => {
+    await db.welcomeOfferClaim.deleteMany({ where: { shopDomain: { in: [dashShop, `other-${dashShop}`] } } });
+    await db.campaign.deleteMany({ where: { shopDomain: dashShop } });
+  });
+
+  it("groups claims by UTC day inside the window only, for this shop only", async () => {
+    const rows = await claimRepository.dailyCounts(dashShop, 14);
+    const total = rows.reduce((a, r) => a + r.n, 0);
+    expect(total).toBe(6); // seven claims minus the one 20 days ago
+    const today = day(0).toISOString().slice(0, 10);
+    expect(rows.find((r) => r.day === today)?.n).toBe(2);
+    expect(rows.every((r) => typeof r.n === "number")).toBe(true);
+  });
+
+  it("counts the previous 7 days separately from the last 7", async () => {
+    const stats = await claimRepository.stats(dashShop);
+    expect(stats.last7Days).toBe(5);
+    expect(stats.previous7Days).toBe(1);
+  });
+
+  it("does not call a customer the app already emailed 'not subscribed': only claims Flow cannot deliver", async () => {
+    const stats = await claimRepository.stats(dashShop);
+    expect(stats.notSubscribed).toBe(1);
+  });
+
+  it("returns delivery counts in one grouped query", async () => {
+    const rows = await claimRepository.deliveryCounts(dashShop);
+    expect(rows.reduce((a, r) => a + r.n, 0)).toBe(7);
+    expect(rows.find((r) => r.status === "EMAIL_SENT" && r.eligibility === "NOT_SUBSCRIBED")?.n).toBe(1);
+  });
+});

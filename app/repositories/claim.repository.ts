@@ -1,5 +1,6 @@
-import type { Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import db from "../db.server";
+import { windowStart } from "../dashboard/metrics";
 
 export const CLAIMS_PAGE_SIZE = 25;
 
@@ -97,20 +98,46 @@ export const claimRepository = {
     return count;
   },
 
+  /** Claims per UTC day over the last `days` days (days with none are absent: the caller fills them in). */
+  dailyCounts(shopDomain: string, days: number) {
+    const since = windowStart(days);
+    return db.$queryRaw<{ day: string; n: number }[]>(Prisma.sql`
+      SELECT to_char("claimed_at", 'YYYY-MM-DD') AS day, COUNT(*)::int AS n
+      FROM "welcome_offer_claims"
+      WHERE "shop_domain" = ${shopDomain} AND "claimed_at" >= ${since}
+      GROUP BY 1`);
+  },
+
+  /** Claims by email status and consent, for the dashboard's delivery breakdown. One grouped query, no per-row calls. */
+  async deliveryCounts(shopDomain: string) {
+    const rows = await db.welcomeOfferClaim.groupBy({
+      by: ["emailStatus", "emailEligibility"],
+      where: { shopDomain },
+      _count: { _all: true },
+    });
+    return rows.map((r) => ({ status: r.emailStatus, eligibility: r.emailEligibility, n: r._count._all }));
+  },
+
   async stats(shopDomain: string) {
     const startOfToday = new Date();
     startOfToday.setHours(0, 0, 0, 0);
     const weekAgo = new Date(Date.now() - 7 * 86400000);
-    const [total, today, last7Days, failed, notSubscribed, lastTrigger] = await Promise.all([
+    const twoWeeksAgo = new Date(Date.now() - 14 * 86400000);
+    const [total, today, last7Days, previous7Days, failed, notSubscribed, lastTrigger] = await Promise.all([
       db.welcomeOfferClaim.count({ where: { shopDomain } }),
       db.welcomeOfferClaim.count({ where: { shopDomain, claimedAt: { gte: startOfToday } } }),
       db.welcomeOfferClaim.count({ where: { shopDomain, claimedAt: { gte: weekAgo } } }),
+      db.welcomeOfferClaim.count({ where: { shopDomain, claimedAt: { gte: twoWeeksAgo, lt: weekAgo } } }),
       db.welcomeOfferClaim.count({ where: { shopDomain, emailStatus: "FAILED" } }),
       db.welcomeOfferClaim.count({
-        where: { shopDomain, OR: [{ emailEligibility: "NOT_SUBSCRIBED" }, { emailStatus: "NOT_SUBSCRIBED" }] },
+        // Only claims Flow must deliver: one the app already emailed (code-only) did reach the customer.
+        where: {
+          shopDomain,
+          OR: [{ emailEligibility: "NOT_SUBSCRIBED", delivery: "FLOW" }, { emailStatus: "NOT_SUBSCRIBED" }],
+        },
       }),
       db.welcomeOfferClaim.aggregate({ where: { shopDomain }, _max: { flowHandoffAt: true } }),
     ]);
-    return { total, today, last7Days, failed, notSubscribed, lastHandoffAt: lastTrigger._max.flowHandoffAt };
+    return { total, today, last7Days, previous7Days, failed, notSubscribed, lastHandoffAt: lastTrigger._max.flowHandoffAt };
   },
 };
