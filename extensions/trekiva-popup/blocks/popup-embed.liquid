@@ -1,11 +1,16 @@
 {%- comment -%}
   Trekiva popup app embed. Enable it in Online Store > Themes > Customize > App embeds.
   All data comes from the app proxy; nothing secret is rendered here.
+
+  Nothing here may block the page: a <link rel="stylesheet"> in the body makes the browser hold back
+  every script after it (COD King's checkout-button script among them) until the CSS downloads, and a
+  Checkout click in that gap goes straight to Shopify checkout. So the stylesheet URL is only passed
+  along, and the deferred script loads it once the page has finished loading.
 {%- endcomment -%}
-{{ 'trekiva-popup.css' | asset_url | stylesheet_tag }}
 <div
   id="trekiva-popup-root"
   data-proxy-base="/apps/trekiva"
+  data-css="{{ 'trekiva-popup.css' | asset_url }}"
   data-page-type="{{ request.page_type | escape }}"
   data-design-mode="{{ request.design_mode }}"
   hidden

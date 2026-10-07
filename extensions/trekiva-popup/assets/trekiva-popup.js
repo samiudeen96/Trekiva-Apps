@@ -327,17 +327,43 @@
     close: closePopup
   };
 
-  fetch(base + "/campaigns/active", { headers: { Accept: "application/json" }, credentials: "same-origin" })
-    .then(function (res) { return res.ok ? res.json() : null; })
-    .then(function (data) {
-      if (!data || !data.campaign) return;
-      campaign = data.campaign;
-      if (pendingOpen) openPopup();
-      var preview = root.getAttribute("data-design-mode") === "true";
-      var r = campaign.rules;
-      if (r.trigger === "manual") return; // opened by window.TrekivaPopup.open()
-      if (!preview && !(deviceAllowed(r) && pageAllowed(r) && frequencyAllowed(campaign))) return;
-      schedule(campaign);
-    })
-    .catch(function () { /* never break the storefront */ });
+  // The stylesheet is added from here, not by the embed's Liquid: a script-inserted stylesheet never
+  // holds back other apps' scripts (see popup-embed.liquid). Resolves once it has loaded or failed.
+  function loadCss() {
+    return new Promise(function (resolve) {
+      var href = root.getAttribute("data-css");
+      if (!href) return resolve();
+      var link = document.createElement("link");
+      link.rel = "stylesheet";
+      link.href = href;
+      link.onload = link.onerror = function () { resolve(); };
+      document.head.appendChild(link);
+    });
+  }
+
+  // Start only after the page (and every other app's script on it) has finished loading.
+  function whenPageLoaded(fn) {
+    if (document.readyState === "complete") return fn();
+    window.addEventListener("load", fn, { once: true });
+  }
+
+  whenPageLoaded(function () {
+    Promise.all([
+      loadCss(),
+      fetch(base + "/campaigns/active", { headers: { Accept: "application/json" }, credentials: "same-origin" })
+        .then(function (res) { return res.ok ? res.json() : null; })
+    ])
+      .then(function (results) {
+        var data = results[1];
+        if (!data || !data.campaign) return;
+        campaign = data.campaign;
+        if (pendingOpen) openPopup();
+        var preview = root.getAttribute("data-design-mode") === "true";
+        var r = campaign.rules;
+        if (r.trigger === "manual") return; // opened by window.TrekivaPopup.open()
+        if (!preview && !(deviceAllowed(r) && pageAllowed(r) && frequencyAllowed(campaign))) return;
+        schedule(campaign);
+      })
+      .catch(function () { /* never break the storefront */ });
+  });
 })();
