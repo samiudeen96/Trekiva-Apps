@@ -6,17 +6,35 @@ export const CLAIMS_PAGE_SIZE = 25;
 
 const include = { campaign: { select: { name: true } } } as const;
 
-function where(shopDomain: string, q?: string): Prisma.WelcomeOfferClaimWhereInput {
+/** The email-status filter groups the statuses the way the badges read, legacy ones included. */
+export const STATUS_FILTERS = {
+  sent: ["EMAIL_SENT", "SENT"],
+  pending: ["PENDING"],
+  failed: ["FAILED"],
+  flow: ["READY_FOR_FLOW", "TRIGGERED", "NOT_SUBSCRIBED"],
+} as const;
+export type StatusFilter = keyof typeof STATUS_FILTERS;
+export const MARKETING_FILTERS = ["SUBSCRIBED", "NOT_SUBSCRIBED", "UNKNOWN"] as const;
+export type MarketingFilter = (typeof MARKETING_FILTERS)[number];
+
+export interface ClaimFilters {
+  status?: StatusFilter;
+  marketing?: MarketingFilter;
+}
+
+function where(shopDomain: string, q?: string, f: ClaimFilters = {}): Prisma.WelcomeOfferClaimWhereInput {
   const term = q?.trim().toLowerCase();
   return {
     shopDomain,
     ...(term ? { emailNormalized: { contains: term } } : {}),
+    ...(f.status ? { emailStatus: { in: [...STATUS_FILTERS[f.status]] } } : {}),
+    ...(f.marketing ? { emailEligibility: f.marketing } : {}),
   };
 }
 
 export const claimRepository = {
-  async list(shopDomain: string, page: number, q?: string) {
-    const filter = where(shopDomain, q);
+  async list(shopDomain: string, page: number, q?: string, filters?: ClaimFilters) {
+    const filter = where(shopDomain, q, filters);
     const [rows, total] = await Promise.all([
       db.welcomeOfferClaim.findMany({
         where: filter,

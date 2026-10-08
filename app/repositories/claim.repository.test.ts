@@ -50,6 +50,24 @@ describe("claimRepository", () => {
     expect(r.rows.map((x) => x.emailNormalized)).toEqual(["user7@example.com"]);
   });
 
+  it("filters by email status and marketing, combined with search and paging", async () => {
+    // Seeded: user0 FAILED, everyone else PENDING; all share the default UNKNOWN eligibility.
+    const failed = await claimRepository.list(shop, 1, "", { status: "failed" });
+    expect(failed.rows.map((x) => x.emailNormalized)).toEqual(["user0@example.com"]);
+    expect(failed.total).toBe(1);
+
+    const pending = await claimRepository.list(shop, 1, "", { status: "pending" });
+    expect(pending.total).toBe(TOTAL - 1);
+
+    // A filter narrows the search too, and total reflects the filtered set (so paging is right).
+    expect((await claimRepository.list(shop, 1, "user0@", { status: "pending" })).total).toBe(0);
+    expect((await claimRepository.list(shop, 2, "", { status: "pending" })).rows).toHaveLength(4);
+
+    expect((await claimRepository.list(shop, 1, "", { marketing: "UNKNOWN" })).total).toBe(TOTAL);
+    expect((await claimRepository.list(shop, 1, "", { marketing: "SUBSCRIBED" })).total).toBe(0);
+    expect((await claimRepository.list(shop, 1, "", { status: "sent" })).total).toBe(0);
+  });
+
   it("exports every row exactly once across batches", async () => {
     const seen: string[] = [];
     for await (const batch of claimRepository.exportBatches(shop, 10)) seen.push(...batch.map((b) => b.id));

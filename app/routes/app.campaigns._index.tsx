@@ -3,6 +3,7 @@ import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import { useActionData, useLoaderData, useNavigation, useSubmit } from "react-router";
 import { authenticate } from "../shopify.server";
 import { campaignService } from "../campaigns/service";
+import { ConfirmModal } from "../components/ConfirmModal";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
@@ -49,21 +50,17 @@ export default function Campaigns() {
   const submit = useSubmit();
   const deleting = useNavigation().state === "submitting";
   // The row awaiting confirmation, and the active campaign the merchant tried to delete.
-  const [confirmId, setConfirmId] = useState<string | null>(null);
+  const [target, setTarget] = useState<{ id: string; name: string; claims: number } | null>(null);
   const [blocked, setBlocked] = useState<{ id: string; name: string } | null>(null);
 
   const askDelete = (c: (typeof campaigns)[number]) => {
     if (c.status === "ACTIVE") {
-      setConfirmId(null);
+      setTarget(null);
       setBlocked({ id: c.id, name: c.name });
     } else {
       setBlocked(null);
-      setConfirmId(c.id);
+      setTarget({ id: c.id, name: c.name, claims: c.claims });
     }
-  };
-  const confirmDelete = (id: string) => {
-    setConfirmId(null);
-    submit({ intent: "delete", id }, { method: "post" });
   };
 
   return (
@@ -115,28 +112,9 @@ export default function Campaigns() {
                   <s-table-cell>{c.claims}</s-table-cell>
                   <s-table-cell>{new Date(c.createdAt).toLocaleDateString()}</s-table-cell>
                   <s-table-cell>
-                    {confirmId === c.id ? (
-                      <s-stack gap="small-200">
-                        <s-text color="subdued">
-                          {c.claims > 0 ? `Also deletes its ${c.claims} claim(s). ` : ""}This can&apos;t be undone.
-                        </s-text>
-                        <s-stack direction="inline" gap="small-200">
-                          <s-button
-                            tone="critical"
-                            variant="primary"
-                            onClick={() => confirmDelete(c.id)}
-                            {...(deleting ? { loading: true } : {})}
-                          >
-                            Confirm delete
-                          </s-button>
-                          <s-button onClick={() => setConfirmId(null)}>Cancel</s-button>
-                        </s-stack>
-                      </s-stack>
-                    ) : (
-                      <s-button tone="critical" variant="tertiary" onClick={() => askDelete(c)}>
-                        Delete
-                      </s-button>
-                    )}
+                    <s-button tone="critical" variant="tertiary" onClick={() => askDelete(c)}>
+                      Delete
+                    </s-button>
                   </s-table-cell>
                 </s-table-row>
               ))}
@@ -144,6 +122,26 @@ export default function Campaigns() {
           </s-table>
         )}
       </s-section>
+
+      <ConfirmModal
+        open={target !== null}
+        heading={`Delete campaign "${target?.name ?? ""}"?`}
+        confirmLabel="Delete campaign"
+        destructive
+        busy={deleting}
+        onClose={() => setTarget(null)}
+        onConfirm={() => target && submit({ intent: "delete", id: target.id }, { method: "post" })}
+      >
+        <s-stack gap="small-200">
+          <s-text>This can&apos;t be undone.</s-text>
+          {target && target.claims > 0 && (
+            <s-banner tone="warning">
+              This also deletes its {target.claims} claim{target.claims === 1 ? "" : "s"} from Trekiva. The Shopify
+              customers and discount codes stay.
+            </s-banner>
+          )}
+        </s-stack>
+      </ConfirmModal>
     </s-page>
   );
 }

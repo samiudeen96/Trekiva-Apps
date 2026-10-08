@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import { useActionData, useLoaderData, useNavigation, useSubmit } from "react-router";
+import { ConfirmModal } from "../components/ConfirmModal";
 import { useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
 import { emailTemplateRepository } from "../repositories/email-template.repository";
@@ -50,7 +51,7 @@ export default function Templates() {
   const submit = useSubmit();
   const busy = useNavigation().state === "submitting";
   const shopify = useAppBridge();
-  const [confirmId, setConfirmId] = useState<string | null>(null);
+  const [target, setTarget] = useState<{ id: string; name: string } | null>(null);
 
   useEffect(() => {
     if (data?.done) shopify.toast.show(data.done);
@@ -110,37 +111,20 @@ export default function Templates() {
                   </s-table-cell>
                   <s-table-cell>{new Date(t.updatedAt).toLocaleDateString()}</s-table-cell>
                   <s-table-cell>
-                    {confirmId === t.id ? (
-                      <s-stack direction="inline" gap="small-200">
-                        <s-button
-                          tone="critical"
-                          variant="primary"
-                          onClick={() => {
-                            setConfirmId(null);
-                            submit({ intent: "delete", id: t.id }, { method: "post" });
-                          }}
-                          {...(busy ? { loading: true } : {})}
-                        >
-                          Confirm delete
-                        </s-button>
-                        <s-button onClick={() => setConfirmId(null)}>Cancel</s-button>
-                      </s-stack>
-                    ) : (
-                      <s-stack direction="inline" gap="small-200">
-                        <s-button variant="tertiary" href={`/app/templates/${t.id}`}>Edit</s-button>
-                        <s-button variant="tertiary" onClick={() => submit({ intent: "duplicate", id: t.id }, { method: "post" })}>
-                          Duplicate
-                        </s-button>
-                        <s-button
-                          variant="tertiary"
-                          tone="critical"
-                          disabled={t.campaigns.length > 0}
-                          onClick={() => setConfirmId(t.id)}
-                        >
-                          Delete
-                        </s-button>
-                      </s-stack>
-                    )}
+                    <s-stack direction="inline" gap="small-200">
+                      <s-button variant="tertiary" href={`/app/templates/${t.id}`}>Edit</s-button>
+                      <s-button variant="tertiary" onClick={() => submit({ intent: "duplicate", id: t.id }, { method: "post" })}>
+                        Duplicate
+                      </s-button>
+                      <s-button
+                        variant="tertiary"
+                        tone="critical"
+                        disabled={t.campaigns.length > 0}
+                        onClick={() => setTarget({ id: t.id, name: t.name })}
+                      >
+                        Delete
+                      </s-button>
+                    </s-stack>
                   </s-table-cell>
                 </s-table-row>
               ))}
@@ -148,6 +132,18 @@ export default function Templates() {
           </s-table>
         )}
       </s-section>
+
+      <ConfirmModal
+        open={target !== null}
+        heading={`Delete template "${target?.name ?? ""}"?`}
+        confirmLabel="Delete template"
+        destructive
+        busy={busy}
+        onClose={() => setTarget(null)}
+        onConfirm={() => target && submit({ intent: "delete", id: target.id }, { method: "post" })}
+      >
+        <s-text>This can&apos;t be undone. No campaign uses this template, so no emails are affected.</s-text>
+      </ConfirmModal>
     </s-page>
   );
 }
