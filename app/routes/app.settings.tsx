@@ -88,7 +88,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     checks: [
       ["Shopify connection", shopifyChecks.shopify],
       ["Granted scopes", shopifyChecks.scopes],
-      ["Customer, metafield and tag write access", access.customers],
+      [
+        mail ? "Customer write access" : "Customer, metafield and tag write access",
+        mail ? { ...access.customers, detail: access.customers.ok ? "write_customers granted: Trekiva can find or create the customer who claims" : access.customers.detail } : access.customers,
+      ],
       ["Discount write access", access.discounts],
       [
         "Product access (for the email's product section)",
@@ -100,8 +103,13 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       ["Active campaign", activeCampaign],
       ["Linked Shopify discount", discounts],
       ["Welcome email sending", emailSending],
-      ["Customer metafield definitions", mail ? { ok: true, detail: `Optional: the app sends the email. ${definitions.detail}` } : definitions],
-      ["Shopify Flow integration", flow],
+      // Flow's metafields and integration only matter when Flow (not the app) sends the email.
+      ...(mail
+        ? []
+        : [
+            ["Customer metafield definitions", definitions],
+            ["Shopify Flow integration", flow],
+          ]),
     ] as [string, Check][],
     definitionsMissing: !mail && definitions.missing.length > 0,
     appSendsEmail: Boolean(mail),

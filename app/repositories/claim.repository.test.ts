@@ -68,6 +68,15 @@ describe("claimRepository", () => {
     expect((await claimRepository.list(shop, 1, "", { status: "sent" })).total).toBe(0);
   });
 
+  it("sorts newest first by default, oldest first, or by email", async () => {
+    expect((await claimRepository.list(shop, 1)).rows[0].emailNormalized).toBe("user0@example.com");
+    expect((await claimRepository.list(shop, 1, "", { sort: "oldest" })).rows[0].emailNormalized).toBe(
+      `user${TOTAL - 1}@example.com`,
+    );
+    const byEmail = (await claimRepository.list(shop, 1, "", { sort: "email" })).rows.map((r) => r.emailNormalized);
+    expect(byEmail).toEqual([...byEmail].sort());
+  });
+
   it("exports every row exactly once across batches", async () => {
     const seen: string[] = [];
     for await (const batch of claimRepository.exportBatches(shop, 10)) seen.push(...batch.map((b) => b.id));

@@ -17,9 +17,18 @@ export type StatusFilter = keyof typeof STATUS_FILTERS;
 export const MARKETING_FILTERS = ["SUBSCRIBED", "NOT_SUBSCRIBED", "UNKNOWN"] as const;
 export type MarketingFilter = (typeof MARKETING_FILTERS)[number];
 
+export const CLAIM_SORTS = ["newest", "oldest", "email"] as const;
+export type ClaimSort = (typeof CLAIM_SORTS)[number];
+const ORDER: Record<ClaimSort, Prisma.WelcomeOfferClaimOrderByWithRelationInput[]> = {
+  newest: [{ claimedAt: "desc" }],
+  oldest: [{ claimedAt: "asc" }],
+  email: [{ emailNormalized: "asc" }, { claimedAt: "desc" }],
+};
+
 export interface ClaimFilters {
   status?: StatusFilter;
   marketing?: MarketingFilter;
+  sort?: ClaimSort;
 }
 
 function where(shopDomain: string, q?: string, f: ClaimFilters = {}): Prisma.WelcomeOfferClaimWhereInput {
@@ -38,7 +47,7 @@ export const claimRepository = {
     const [rows, total] = await Promise.all([
       db.welcomeOfferClaim.findMany({
         where: filter,
-        orderBy: { claimedAt: "desc" },
+        orderBy: ORDER[filters?.sort ?? "newest"],
         skip: (Math.max(page, 1) - 1) * CLAIMS_PAGE_SIZE,
         take: CLAIMS_PAGE_SIZE,
         include,

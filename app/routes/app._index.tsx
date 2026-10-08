@@ -112,7 +112,7 @@ export default function Dashboard() {
   const steps = [
     { done: d.setup.hasCampaign, title: "Create a campaign", detail: "Design the popup and pick your Shopify discount.", href: "/app/campaigns/new" },
     { done: d.setup.hasActive, title: "Activate it", detail: "Set the campaign to Active so the popup shows on your store.", href: "/app/campaigns" },
-    { done: d.setup.hasDelivery, title: "Set up email delivery", detail: "Connect Resend, or build the Shopify Flow workflow.", href: "/app/settings" },
+    { done: d.setup.hasDelivery, title: "Set up email delivery", detail: "Add your Resend key and sender address.", href: "/app/settings" },
     { done: d.setup.hasClaim, title: "Get your first claim", detail: "Submit the popup yourself with a new email to test it.", href: "/app/claims" },
   ];
   const stepsLeft = steps.filter((s) => !s.done).length;
