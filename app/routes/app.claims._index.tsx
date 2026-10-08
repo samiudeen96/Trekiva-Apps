@@ -41,6 +41,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       discount: c.discountCode,
       claimedAt: c.claimedAt.toISOString(),
       status: c.emailStatus,
+      redeemed: c.redeemedAt !== null,
       eligibility: c.emailEligibility,
     })),
   };
@@ -59,9 +60,10 @@ const COLUMNS = [
   { key: "status", label: "Email status" },
   { key: "marketing", label: "Marketing" },
   { key: "discount", label: "Discount code" },
+  { key: "code", label: "Code status" },
   { key: "campaign", label: "Campaign" },
 ];
-const DEFAULT_KEY = "claimed,status,marketing,discount";
+const DEFAULT_KEY = "claimed,status,marketing,discount,code";
 const COLUMNS_EVENT = "trekiva:claims-columns";
 function subscribeColumns(cb: () => void) {
   window.addEventListener(COLUMNS_EVENT, cb);
@@ -207,6 +209,7 @@ export default function Claims() {
             {has("status") && <s-table-header listSlot="inline">Email status</s-table-header>}
             {has("marketing") && <s-table-header>Marketing</s-table-header>}
             {has("discount") && <s-table-header>Discount code</s-table-header>}
+            {has("code") && <s-table-header>Code status</s-table-header>}
             {has("campaign") && <s-table-header>Campaign</s-table-header>}
             <s-table-header>Actions</s-table-header>
           </s-table-header-row>
@@ -231,6 +234,14 @@ export default function Claims() {
                 )}
                 {has("marketing") && <s-table-cell>{eligibilityLabel[c.eligibility]}</s-table-cell>}
                 {has("discount") && <s-table-cell>{c.discount}</s-table-cell>}
+                {has("code") && (
+                  <s-table-cell>
+                    {/* "Used" means an order spent it and the code was pulled from the discount. */}
+                    <s-badge tone={c.redeemed ? "neutral" : "success"}>
+                      {c.redeemed ? "Used" : "Unused"}
+                    </s-badge>
+                  </s-table-cell>
+                )}
                 {has("campaign") && <s-table-cell>{c.campaign}</s-table-cell>}
                 <s-table-cell>
                   <s-button tone="critical" variant="tertiary" onClick={() => setTarget({ id: c.id, email: c.email, discount: c.discount })}>

@@ -80,3 +80,58 @@ export function createDiscountCodeGateway(
     },
   };
 }
+
+export const FIND_REDEEM_CODE = `#graphql
+  query TrekivaRedeemCodeId($code: String!) {
+    codeDiscountNodeByCode(code: $code) {
+      id
+      codeDiscount {
+        ... on DiscountCodeBasic { codes(first: 25, query: $code) { nodes { id code asyncUsageCount } } }
+        ... on DiscountCodeBxgy { codes(first: 25, query: $code) { nodes { id code asyncUsageCount } } }
+        ... on DiscountCodeFreeShipping { codes(first: 25, query: $code) { nodes { id code asyncUsageCount } } }
+      }
+    }
+  }
+`;
+
+export const DELETE_CODES = `#graphql
+  mutation TrekivaDeleteRedeemCodes($discountId: ID!, $ids: [ID!]) {
+    discountCodeRedeemCodeBulkDelete(discountId: $discountId, ids: $ids) {
+      job { id }
+      userErrors { field message }
+    }
+  }
+`;
+
+export type RevokeResult = "revoked" | "not-found" | "other-discount";
+
+/**
+ * Removes one claim's code from its discount, so a code an order already spent cannot buy another.
+ *
+ * Shopify counts a redemption only when its own checkout redeems the code; a checkout app that
+ * applies the amount itself leaves the code unused and endlessly reusable. Deleting the code is
+ * the only lever Shopify offers, as a single redeem code cannot be disabled.
+ *
+ * It refuses to touch a code that belongs to a different discount, so a merchant's own codes and
+ * other apps' codes are never at risk. `discountId` must come from the claim's own campaign.
+ */
+export async function revokeClaimCode(
+  admin: AdminGraphqlClient,
+  { discountId, code }: { discountId: string; code: string },
+): Promise<RevokeResult> {
+  const node = (await gql(admin, FIND_REDEEM_CODE, { code })).codeDiscountNodeByCode;
+  // Already gone (a repeated webhook, or the merchant deleted it): nothing to do.
+  if (!node) return "not-found";
+  if (node.id !== discountId) return "other-discount";
+
+  // `query` is a search, so the exact code is matched here rather than trusting the result order.
+  const match = (node.codeDiscount?.codes?.nodes ?? []).find(
+    (n: { code?: string }) => n.code?.toUpperCase() === code.toUpperCase(),
+  );
+  if (!match) return "not-found";
+
+  const res = await gql(admin, DELETE_CODES, { discountId, ids: [match.id] });
+  const errors = res.discountCodeRedeemCodeBulkDelete?.userErrors;
+  if (errors?.length) throw new Error(`could not delete redeem code: ${JSON.stringify(errors)}`);
+  return "revoked";
+}

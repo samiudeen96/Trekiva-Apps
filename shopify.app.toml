@@ -6,7 +6,7 @@ embedded = true
 
 [access_scopes]
 # Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
-scopes = "read_customers,write_customers,read_discounts,write_discounts,read_products"
+scopes = "read_customers,write_customers,read_discounts,write_discounts,read_products,read_orders"
 
 [webhooks]
 api_version = "2026-10"
@@ -26,6 +26,18 @@ api_version = "2026-10"
   [[webhooks.subscriptions]]
   uri = "/webhooks/customers/update"
   topics = ["customers/update"]
+
+  # A code an order has used is removed from the discount, so it cannot buy a second order.
+  # Handled by: /app/routes/webhooks.orders.create.tsx
+  [[webhooks.subscriptions]]
+  uri = "/webhooks/orders/create"
+  topics = ["orders/create"]
+
+  # Cancelled order (common with COD returns): the customer gets their code back.
+  # Handled by: /app/routes/webhooks.orders.cancelled.tsx
+  [[webhooks.subscriptions]]
+  uri = "/webhooks/orders/cancelled"
+  topics = ["orders/cancelled"]
 
   # Mandatory compliance topic for public apps only
   # See: https://shopify.dev/docs/apps/build/privacy-law-compliance

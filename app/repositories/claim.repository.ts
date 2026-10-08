@@ -83,6 +83,42 @@ export const claimRepository = {
     }
   },
 
+  /**
+   * The claims among `codes` that this shop actually issued, with the discount their code lives on.
+   * The guard against revoking anything that is not ours: a code absent from here is never touched.
+   */
+  async findIssuedCodes(shopDomain: string, codes: string[]) {
+    if (codes.length === 0) return [];
+    return db.welcomeOfferClaim.findMany({
+      where: { shopDomain, discountCode: { in: codes } },
+      select: {
+        id: true,
+        discountCode: true,
+        redeemedAt: true,
+        redeemedOrderId: true,
+        campaign: { select: { discountId: true } },
+      },
+    });
+  },
+
+  /** Records the order that spent a claim's code. Scoped by shop and only ever set once. */
+  async markRedeemed(shopDomain: string, id: string, orderId: string) {
+    const { count } = await db.welcomeOfferClaim.updateMany({
+      where: { id, shopDomain, redeemedAt: null },
+      data: { redeemedAt: new Date(), redeemedOrderId: orderId },
+    });
+    return count === 1;
+  },
+
+  /** Undoes markRedeemed when that same order is cancelled, so the code can be issued again. */
+  async clearRedeemed(shopDomain: string, id: string, orderId: string) {
+    const { count } = await db.welcomeOfferClaim.updateMany({
+      where: { id, shopDomain, redeemedOrderId: orderId },
+      data: { redeemedAt: null, redeemedOrderId: null },
+    });
+    return count === 1;
+  },
+
   /** Scoped by shop so one merchant can never delete another's claim. False when it does not exist. */
   async delete(shopDomain: string, id: string) {
     const { count } = await db.welcomeOfferClaim.deleteMany({ where: { id, shopDomain } });

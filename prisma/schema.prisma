@@ -144,6 +144,10 @@ model WelcomeOfferClaim {
   delivery          EmailDelivery @default(FLOW) @map("delivery")
   // The popup's explicit marketing checkbox, kept so a retry reuses the original consent.
   marketingConsent  Boolean     @default(false) @map("marketing_consent")
+  // Set when an order used this claim's code; the code is then removed from the Shopify discount so
+  // it cannot buy a second order. Cleared (and the code restored) if that order is cancelled.
+  redeemedAt        DateTime?   @map("redeemed_at")
+  redeemedOrderId   String?     @map("redeemed_order_id")
   // Why the last fulfilment attempt failed (customer | discount | metafields | tag). Cleared on success.
   failureStep       String?     @map("failure_step")
   failureReason     String?     @map("failure_reason")
