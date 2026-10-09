@@ -12,6 +12,8 @@ export const defaultCampaign: CampaignInput = {
     successMessage: "Check your inbox for your 10% welcome offer.",
     appliedTitle: "Discount applied 🎉",
     appliedMessage: "Your 10% welcome discount has been applied. It will take effect automatically at checkout.",
+    appliedEmailedMessage:
+      "Your 10% welcome discount has been applied. We've also emailed you a button to apply it again, in case you come back later.",
     alreadyClaimedTitle: "Already claimed",
     alreadyClaimedMessage:
       "You’ve already claimed your welcome offer. Please check your previous email for your discount code.",
@@ -42,6 +44,7 @@ export const defaultCampaign: CampaignInput = {
     frequencyDays: 7,
     firstPurchaseOnly: false,
     applyOnSignup: true,
+    emailCode: true,
   },
   emailTemplateId: null,
 };

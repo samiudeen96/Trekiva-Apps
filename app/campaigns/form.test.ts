@@ -12,7 +12,13 @@ function formData(emailTemplateId = "", overrides: Record<string, string> = {}) 
   for (const [k, v] of Object.entries(d.content)) fd.set(`content.${k}`, String(v));
   for (const [k, v] of Object.entries(d.design)) fd.set(`design.${k}`, String(v));
   if (d.design.showCloseIcon) fd.set("design.showCloseIcon", "on");
-  for (const [k, v] of Object.entries(d.rules)) if (k !== "specificUrls" && k !== "firstPurchaseOnly") fd.set(`rules.${k}`, String(v));
+  for (const [k, v] of Object.entries(d.rules)) {
+    if (k === "specificUrls") continue;
+    // Checkboxes are sent as "on" when ticked and absent otherwise.
+    if (typeof v === "boolean") {
+      if (v) fd.set(`rules.${k}`, "on");
+    } else fd.set(`rules.${k}`, String(v));
+  }
   fd.set("rules.specificUrls", "");
   fd.set("emailTemplateId", emailTemplateId);
   for (const [k, v] of Object.entries(overrides)) fd.set(k, v);
@@ -38,5 +44,28 @@ describe("parseCampaignForm: email template", () => {
   it("keeps the rest of the campaign valid", () => {
     expect(parseCampaignForm(formData()).ok).toBe(true);
     expect(defaultCampaign.emailTemplateId).toBeNull();
+  });
+});
+
+describe("parseCampaignForm: how the customer gets the code", () => {
+  it("defaults to instant apply and the email together", () => {
+    const r = parseCampaignForm(formData());
+    expect(r.ok && r.input.rules).toMatchObject({ applyOnSignup: true, emailCode: true });
+  });
+
+  it("accepts either switch alone", () => {
+    const instantOnly = parseCampaignForm(formData("", { "rules.emailCode": "" }));
+    expect(instantOnly.ok && instantOnly.input.rules).toMatchObject({ applyOnSignup: true, emailCode: false });
+    const emailOnly = parseCampaignForm(formData("", { "rules.applyOnSignup": "" }));
+    expect(emailOnly.ok && emailOnly.input.rules).toMatchObject({ applyOnSignup: false, emailCode: true });
+  });
+
+  it("refuses both off, because the customer would have no way to get the code", () => {
+    const fd = formData();
+    fd.delete("rules.applyOnSignup");
+    fd.delete("rules.emailCode");
+    const r = parseCampaignForm(fd);
+    expect(r.ok).toBe(false);
+    expect(!r.ok && r.errors["rules.emailCode"]).toMatch(/instant apply|email/i);
   });
 });

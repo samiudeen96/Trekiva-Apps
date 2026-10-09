@@ -256,12 +256,14 @@ export function renderEmail(input: {
   const mode = input.mode ?? "full";
   const t = input.template;
 
-  // The code-only message exists to deliver the code, so it always shows it, whatever the template hides.
+  // The code-only message (for someone not subscribed to marketing) keeps only the header and the discount block.
+  // It follows the template's "hide the code" choice, so the customer gets the Apply button and not the code
+  // written out. A discount block with no button has no other way to be used, so it shows the code then.
   let sections: EmailSection[] =
     mode === "codeOnly"
       ? t.sections
           .filter((s) => s.type === "header" || s.type === "discount")
-          .map((s) => (s.type === "discount" ? { ...s, showCode: true } : s))
+          .map((s) => (s.type === "discount" ? { ...s, showCode: s.showCode || !s.buttonLabel.trim() } : s))
       : t.sections;
   // The code must always be in the email, even for a template stored without a discount section.
   if (!sections.some((s) => s.type === "discount")) sections = [...sections, defaultEmail.sections[2]];

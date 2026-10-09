@@ -123,7 +123,11 @@ afterAll(async () => {
 
 /** Switches the campaign to instant apply, the way the merchant's checkbox does. */
 const applyInstantly = (extra: Record<string, unknown> = {}) =>
-  db.campaign.update({ where: { id: campaignId }, data: { rules: { applyOnSignup: true, ...extra } } });
+  db.campaign.update({ where: { id: campaignId }, data: { rules: { applyOnSignup: true, emailCode: false, ...extra } } });
+
+/** Instant apply AND the email with its Apply button. */
+const applyAndEmail = (extra: Record<string, unknown> = {}) =>
+  db.campaign.update({ where: { id: campaignId }, data: { rules: { applyOnSignup: true, emailCode: true, ...extra } } });
 
 describe("ClaimService: instant apply", () => {
   it("hands back the code to apply, sends no email and adds no tag or metafields", async () => {
@@ -217,6 +221,83 @@ describe("ClaimService: instant apply", () => {
 
     expect(outcomes.filter((o) => o.applyPath)).toHaveLength(1);
     expect(await claims()).toHaveLength(1);
+  });
+});
+
+describe("ClaimService: instant apply together with the email", () => {
+  it("emails the apply button AND hands back the code to apply, with wording that says so", async () => {
+    await applyAndEmail();
+    const { service, order, sendWelcomeOffer, addClaimTag } = build({ appEmail: true });
+
+    const out = await claim(service, "both@example.com");
+
+    const row = await only();
+    expect(out.applyPath).toBe(`/discount/${row.discountCode}`);
+    expect(out.message).toMatch(/applied/i);
+    expect(out.message).toMatch(/emailed/i);
+    expect(out.message).not.toMatch(/WELCOME10-/);
+    expect(out.title).toMatch(/applied/i);
+    expect(sendWelcomeOffer).toHaveBeenCalledTimes(1);
+    expect(sendWelcomeOffer.mock.calls[0][0].discountCode).toBe(row.discountCode);
+    // The email is sent after the code is redeemable, and Flow is still not involved.
+    expect(order.slice(0, 3)).toEqual(["customer", "discount", "email"]);
+    expect(addClaimTag).not.toHaveBeenCalled();
+    expect(row).toMatchObject({ delivery: "APP", emailStatus: "EMAIL_SENT" });
+    expect(row.emailSentAt).not.toBeNull();
+  });
+
+  it("without a way to send email it falls back to instant apply alone", async () => {
+    await applyAndEmail();
+    const { service, sendWelcomeOffer } = build({ appEmail: false });
+
+    const out = await claim(service, "noresend@example.com");
+
+    expect(out.applyPath).toMatch(/^\/discount\/WELCOME10-/);
+    expect(out.message).not.toMatch(/emailed/i);
+    expect(sendWelcomeOffer).not.toHaveBeenCalled();
+    expect((await only()).delivery).toBe("INSTANT");
+  });
+
+  it("gives out no code when the email fails, and the retry sends it and returns the same code", async () => {
+    await applyAndEmail();
+    let fail = true;
+    const { service, sendWelcomeOffer } = build({
+      appEmail: true,
+      sendEmail: () => {
+        if (fail) throw new Error("resend down");
+      },
+    });
+
+    await expect(claim(service, "flaky@example.com")).rejects.toThrow("resend down");
+    const failed = await only();
+    expect(failed.emailStatus).toBe("FAILED");
+
+    fail = false;
+    const out = await claim(service, "flaky@example.com");
+    expect(out.applyPath).toBe(`/discount/${failed.discountCode}`);
+    expect(sendWelcomeOffer).toHaveBeenCalledTimes(2);
+    expect((await only()).emailStatus).toBe("EMAIL_SENT");
+  });
+
+  it("never returns the code to an email that already claimed", async () => {
+    await applyAndEmail();
+    const { service, sendWelcomeOffer } = build({ appEmail: true });
+    await claim(service, "dup@example.com");
+
+    const again = await claim(service, "dup@example.com");
+
+    expect(again.status).toBe("already_claimed");
+    expect(again.applyPath).toBeUndefined();
+    expect(sendWelcomeOffer).toHaveBeenCalledTimes(1);
+  });
+
+  it("with instant apply off, it is the original email-only flow and returns no apply path", async () => {
+    await applyAndEmail({ applyOnSignup: false });
+    const { service } = build({ appEmail: true });
+
+    const out = await claim(service, "emailonly@example.com");
+
+    expect(out).toEqual({ status: "claimed", message: content.successMessage });
   });
 });
 

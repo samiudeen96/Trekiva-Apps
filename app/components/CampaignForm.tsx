@@ -32,7 +32,8 @@ const contentFields: [keyof CampaignContent, string, boolean][] = [
   ["successTitle", "Success title (email sent)", false],
   ["successMessage", "Success message (email sent)", true],
   ["appliedTitle", "Applied title", false],
-  ["appliedMessage", "Applied message (instant apply)", true],
+  ["appliedMessage", "Applied message (instant apply only)", true],
+  ["appliedEmailedMessage", "Applied message (instant apply + email)", true],
   ["alreadyClaimedTitle", "Already claimed title", false],
   ["alreadyClaimedMessage", "Already claimed message", true],
   ["notEligibleTitle", "Not eligible title", false],
@@ -280,13 +281,19 @@ export function CampaignForm({ initial, errors = {}, heading, discounts, emailEn
             </s-text>
             <s-checkbox
               name="rules.applyOnSignup"
-              label="Apply the discount instantly after signup (no email)"
+              label="Apply the discount instantly after signup"
               checked={rules.applyOnSignup}
             />
+            <s-checkbox
+              name="rules.emailCode"
+              label="Email the code with an Apply button"
+              checked={rules.emailCode}
+              error={err("rules.emailCode")}
+            />
             <s-text color="subdued">
-              When on, the customer&apos;s unique code is applied in their browser the moment they submit, and no
-              email is sent. When off, the code is emailed instead (step 7). Each email still gets one code, usable
-              once.
+              Turn on either one or both. Instant apply puts the customer&apos;s unique code in their browser the moment
+              they submit; the email (step 7) carries an Apply button that applies it again, which works on another
+              device or after they close the browser. Each email still gets one code, usable once.
             </s-text>
             <s-checkbox
               name="rules.firstPurchaseOnly"
@@ -302,10 +309,9 @@ export function CampaignForm({ initial, errors = {}, heading, discounts, emailEn
         </s-section>
 
         <s-section heading="7. Email delivery">
-          {rules.applyOnSignup && (
+          {!rules.emailCode && (
             <s-banner tone="info">
-              Instant apply is on (step 6), so no email is sent and this step is not used. Turn instant apply off to
-              email the code instead.
+              &quot;Email the code&quot; is off (step 6), so no email is sent and this step is not used.
             </s-banner>
           )}
           {emailEnabled ? (

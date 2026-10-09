@@ -130,6 +130,14 @@ export class ClaimService {
     const claimed: ClaimOutcome = { status: "claimed", message: content.successMessage };
     const already: ClaimOutcome = { status: "already_claimed", message: content.alreadyClaimedMessage };
     const notEligible: ClaimOutcome = { status: "not_eligible", message: content.notEligibleMessage };
+    // The popup applies the discount only when the merchant turned instant apply on. `emailed` picks the wording
+    // that tells the customer a copy is also on its way. Never used for "already claimed".
+    const appliedOutcome = (code: string, emailed: boolean): ClaimOutcome => ({
+      status: "claimed",
+      message: emailed ? content.appliedEmailedMessage : content.appliedMessage,
+      title: content.appliedTitle,
+      applyPath: `/discount/${encodeURIComponent(code)}`,
+    });
 
     if (
       rules.firstPurchaseOnly &&
@@ -140,7 +148,11 @@ export class ClaimService {
 
     // Who delivers this claim is fixed when it is created, so changing the configuration later can
     // never email an already-handled claim a second time.
-    const delivery: "FLOW" | "APP" | "INSTANT" = rules.applyOnSignup ? "INSTANT" : this.email ? "APP" : "FLOW";
+    // "Email the code" asks for an email; with instant apply but no way to send one (no Resend key), the
+    // claim is simply instant. With instant apply off the original email/Flow paths run as before.
+    const emailWanted = rules.emailCode;
+    const delivery: "FLOW" | "APP" | "INSTANT" =
+      rules.applyOnSignup && !(emailWanted && this.email) ? "INSTANT" : this.email ? "APP" : "FLOW";
 
     let claimId: string;
     let claimedAt: Date;
@@ -223,12 +235,7 @@ export class ClaimService {
           where: { id: claimId },
           data: { emailStatus: "APPLIED", failureStep: null, failureReason: null },
         });
-        return {
-          status: "claimed",
-          message: content.appliedMessage,
-          title: content.appliedTitle,
-          applyPath: `/discount/${encodeURIComponent(code)}`,
-        };
+        return appliedOutcome(code, false);
       }
 
       if (mode === "APP") {
@@ -261,7 +268,7 @@ export class ClaimService {
         } catch (err) {
           logger.warn({ err, claimId }, "email sent, but the customer metafields could not be mirrored");
         }
-        return claimed;
+        return rules.applyOnSignup ? appliedOutcome(code, true) : claimed;
       }
 
       step = "metafields";

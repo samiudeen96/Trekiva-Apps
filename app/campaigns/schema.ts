@@ -13,6 +13,7 @@ export const contentSchema = z.object({
   successMessage: text(400),
   appliedTitle: text(120),
   appliedMessage: text(400),
+  appliedEmailedMessage: text(400),
   alreadyClaimedTitle: text(120),
   alreadyClaimedMessage: text(400),
   notEligibleTitle: text(120),
@@ -53,11 +54,13 @@ export const rulesSchema = z.object({
    * only thing that keeps returning customers out.
    */
   firstPurchaseOnly: z.boolean(),
-  /**
-   * After signup, apply the discount in the customer's browser straight away instead of emailing the
-   * code. The email path stays in the app and can be switched back on by clearing this.
-   */
+  /** After signup, apply the discount in the customer's browser straight away. */
   applyOnSignup: z.boolean(),
+  /**
+   * Email the code with its Apply button. Independent of applyOnSignup: either, or both. At least one
+   * must be on (checked in form.ts), or the customer would never receive the code.
+   */
+  emailCode: z.boolean(),
 });
 
 export const detailsSchema = z.object({

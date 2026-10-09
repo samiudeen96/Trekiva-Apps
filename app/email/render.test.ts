@@ -241,8 +241,16 @@ describe("hiding the code", () => {
     expect(emailTemplateSchema.safeParse(hidden()).success).toBe(true);
   });
 
-  it("always shows the code to someone who is not subscribed", () => {
+  it("keeps the code hidden for someone not subscribed too, and gives them the Apply button", () => {
     const r = renderEmail({ template: hidden(), vars: { ...vars, unsubscribeUrl: null }, mode: "codeOnly" });
+    expect(r.html).not.toContain(">WELCOME10-7KQ2M9XH<");
+    expect(r.html).toContain("WELCOME10-7KQ2M9XH"); // still inside the button's link
+    expect(r.html).toMatch(/<a [^>]*href="[^"]*\/discount\/WELCOME10-7KQ2M9XH/);
+  });
+
+  it("shows the code to someone not subscribed when the block has no button to use instead", () => {
+    const noButton = { ...hidden(), sections: hidden().sections.map((s) => (s.type === "discount" ? { ...s, buttonLabel: "" } : s)) } as EmailTemplate;
+    const r = renderEmail({ template: noButton, vars: { ...vars, unsubscribeUrl: null }, mode: "codeOnly" });
     expect(r.html).toContain(">WELCOME10-7KQ2M9XH<");
   });
 });
