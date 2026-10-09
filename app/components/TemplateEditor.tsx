@@ -659,7 +659,7 @@ export function TemplateEditor(p: TemplateEditorProps) {
               <span style={{ color: "#616161" }}>To</span>
               <span>The customer who claimed (subscribers get this email; others get only their code)</span>
               <span style={{ color: "#616161" }}>From</span>
-              <span>{p.from ?? "Not set up yet: set EMAIL_FROM (see Settings)"}</span>
+              <span>{p.from ?? "Not set up yet: set EMAIL_FROM (see Status)"}</span>
             </div>
             <div style={{ marginTop: 12 }}>
               <Text label="Subject" value={value.subject} max={150} onChange={(subject) => onChange({ ...value, subject })} />

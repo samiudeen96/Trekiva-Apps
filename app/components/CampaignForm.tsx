@@ -340,7 +340,7 @@ export function CampaignForm({ initial, errors = {}, heading, discounts, emailEn
                   reaches customers who are subscribed to email marketing. Submitting the popup subscribes new customers and
                   customers who never chose, so keep the privacy text saying they will receive marketing emails.
                   Customers who unsubscribed earlier stay unsubscribed: they still get a valid code, but Shopify Email
-                  skips them and their claim shows Not subscribed. Check Settings for the required metafield definitions. Shopify Email cannot put a different code in each customer&apos;s email, so to show each customer their own code, set up sending from the app (Settings shows what is needed).
+                  skips them and their claim shows Not subscribed. Check Status for the required metafield definitions. Shopify Email cannot put a different code in each customer&apos;s email, so to show each customer their own code, set up sending from the app (Settings shows what is needed).
                 </s-text>
               </s-stack>
           )}
@@ -382,7 +382,7 @@ function TemplatePicker(p: {
     <s-stack gap="base">
       {!p.emailEnabled && (
         <s-banner tone="info">
-          The app is not sending email yet (see Settings), so Shopify Flow sends it. The template you pick here is used
+          The app is not sending email yet (see Status), so Shopify Flow sends it. The template you pick here is used
           as soon as sending from the app is set up.
         </s-banner>
       )}

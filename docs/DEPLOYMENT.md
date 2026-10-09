@@ -46,7 +46,7 @@ Then `shopify app deploy`. This registers webhooks (including `customers/update`
 No Shopify Plus requirement: the workflow starts from Flow's native **Customer tags added** trigger.
 
 ## 4. Merchant setup (once per store)
-1. Install the app. Open **Settings**: every row should be OK (Flow shows "No trigger fired yet" until the first claim).
+1. Install the app. Open **Status**: every row should be OK (Flow shows "No trigger fired yet" until the first claim).
 2. Shopify Admin → Discounts: have a code discount (e.g. `WELCOME10`) with **one use per customer** and eligibility
    **All customers**, or the segment **Customers who haven't purchased** for a first-order-only offer.
 3. **Online Store → Themes → Customize → App embeds**: enable **Trekiva Popup**.
@@ -67,7 +67,7 @@ No Shopify Plus requirement: the workflow starts from Flow's native **Customer t
 
    Use the segment alone and returning customers get a dead code by email; use the app rule alone and a
    customer who orders between claiming and checkout can still redeem. Turning both on covers each gap.
-5. **Settings → Create metafield definitions** (or add the five `trekiva.*` customer metafields under Settings → Custom data).
+5. **Status → Create metafield definitions** (or add the five `trekiva.*` customer metafields under Status → Custom data).
 6. Shopify Flow: create a workflow with trigger **Customer tags added** → condition tags contain `trekiva_welcome_claimed` → action **Send marketing email** (use the customer metafield `trekiva.welcome_discount_code`) → action **Add customer tags** `trekiva_welcome_email_sent`. Turn it on. Send yourself a test first: Shopify does not document that Shopify Email can render customer metafields.
 7. Create a campaign, select the discount, set status **Active**, save.
 8. Test with a fresh email: expect the success message and an email with a unique code (e.g. `WELCOME10-7KQ2M9XH`). Submit again: expect "Already claimed" and no second email. A customer who unsubscribed earlier still gets a valid code, but Shopify Email will not send to them.
@@ -81,20 +81,20 @@ Do this to show each customer their own code in the email. Until it is done, not
 3. Set on the server, then restart: `RESEND_API_KEY=...`, `EMAIL_FROM="Trekiva <care@trekiva.com>"` and optionally
    `EMAIL_REPLY_TO=...`. (Both of the first two must be set; docker-compose already passes them through.)
 4. `npx prisma migrate deploy` (two additive migrations: `campaigns.email` and `welcome_offer_claims.delivery`).
-5. **Settings** should now show "Welcome email sending: OK". Edit your campaign, open step 8 "Welcome email", design the
+5. **Status** should now show "Welcome email sending: OK". Edit your campaign, open step 8 "Welcome email", design the
    email and use **Send test** to see it in your own inbox.
 6. **Turn off the Shopify Flow email workflow.** New claims are sent by the app and get no Flow tag, so a workflow left on
    would do nothing for them, but switching it off avoids any chance of a duplicate.
 7. Claims made before this stay with Flow and are never emailed again by the app.
 
 Product sections need the `read_products` permission: add it to `SCOPES` on the server (already in `shopify.app.toml`),
-run `shopify app deploy`, then approve the new permission when Shopify asks in the admin. Settings shows whether it is granted.
+run `shopify app deploy`, then approve the new permission when Shopify asks in the admin. Status shows whether it is granted.
 
 Notes: use JPG or PNG images (Outlook cannot show WebP). The email's button links to
 `https://<shop>.myshopify.com/discount/<CODE>`, which applies the code and redirects to your store.
 
 ## 5. Operations
-- Failed claims: **Settings** shows why each one failed (customer, discount, metafields or tag step) and has a **Retry failed claims** button. It also checks that every active campaign's Shopify discount still exists and is live.
+- Failed claims: **Status** shows why each one failed (customer, discount, metafields or tag step) and has a **Retry failed claims** button. It also checks that every active campaign's Shopify discount still exists and is live.
 - Health: `GET /healthz` (checks the database). Docker marks `trekiva-app` unhealthy if it fails.
 - Logs: `docker compose logs -f trekiva-app` (JSON; tokens and emails are redacted).
 - Backups: `deploy/backup.sh` (cron daily; keeps 14 days). Restore: `gunzip -c backups/<file> | docker compose exec -T postgres psql -U $POSTGRES_USER -d $POSTGRES_DB`.

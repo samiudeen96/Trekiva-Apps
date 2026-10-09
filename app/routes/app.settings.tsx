@@ -163,8 +163,8 @@ export default function Settings() {
   const retrying = useNavigation().state === "submitting";
 
   return (
-    <s-page heading="Settings">
-      <s-section heading="Status">
+    <s-page heading="Status">
+      <s-section heading="Checks">
         <s-stack gap="base">
           {checks.map(([label, c]) => (
             <s-stack key={label} direction="inline" gap="base" alignItems="center">

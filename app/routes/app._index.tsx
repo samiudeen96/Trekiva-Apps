@@ -75,7 +75,7 @@ const BUCKETS: { key: DeliveryBucket; label: string; hint: string; color: string
   { key: "sent", label: "Code delivered", hint: "Emailed or applied instantly", color: "#0ca30c" },
   { key: "waiting", label: "Waiting for email", hint: "In progress", color: "#b5b5b0" },
   { key: "notSubscribed", label: "Not subscribed", hint: "Valid code, no marketing email", color: "#fab219" },
-  { key: "failed", label: "Failed", hint: "Retry from Settings", color: "#d03b3b" },
+  { key: "failed", label: "Failed", hint: "Retry from Status", color: "#d03b3b" },
 ];
 
 const STATUS_TONE = { ACTIVE: "success", DRAFT: "neutral", DISABLED: "warning" } as const;
@@ -106,7 +106,7 @@ export default function Dashboard() {
     { label: "Create campaign", detail: "Design a new popup and email", icon: "plus-circle", href: "/app/campaigns/new" },
     { label: "Campaigns", detail: "Edit, activate or pause", icon: "layout-popup", href: "/app/campaigns" },
     { label: "Claims", detail: "Search and export claims", icon: "email", href: "/app/claims" },
-    { label: "Settings", detail: "Connections and email setup", icon: "settings", href: "/app/settings" },
+    { label: "Status", detail: "Health checks and failed claims", icon: "status-active", href: "/app/settings" },
   ] as const;
 
   const steps = [
@@ -125,14 +125,14 @@ export default function Dashboard() {
 
       {d.failedClaims > 0 && (
         <s-banner tone="critical" heading={`${d.failedClaims} claim(s) did not get their email yet`}>
-          They will be retried automatically when the customer submits again, or use Retry in Settings. Check
-          Settings for connection problems.
+          They will be retried automatically when the customer submits again, or use Retry in Status. Check
+          Status for connection problems.
         </s-banner>
       )}
       {d.notSubscribedClaims > 0 && (
         <s-banner tone="warning" heading={`${d.notSubscribedClaims} claim(s) from customers who are not subscribed to email marketing`}>
           Their codes work, but Shopify Email does not send marketing email to customers who are not subscribed, so
-          they may not have received their code. Sending the email from the app (Settings) gives them a code-only email.
+          they may not have received their code. Sending the email from the app (Status) gives them a code-only email.
         </s-banner>
       )}
       {d.activeCampaigns === 0 && (

@@ -42,7 +42,7 @@ export const action = async ({ request, params }: ActionFunctionArgs): Promise<A
     const fail = (message: string): ActionResult => ({ saved: false, error: null, test: { ok: false, message } });
     const mail = emailConfig();
     const to = z.string().email().safeParse(String(fd.get("to") ?? "").trim());
-    if (!mail) return fail("Sending is not set up: set RESEND_API_KEY and EMAIL_FROM (see Settings).");
+    if (!mail) return fail("Sending is not set up: set RESEND_API_KEY and EMAIL_FROM (see Status).");
     if (!to.success) return fail("Enter a valid email address.");
     if (!parsed.ok) return fail(parsed.error);
     try {
