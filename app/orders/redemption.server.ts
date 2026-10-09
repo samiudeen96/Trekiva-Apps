@@ -30,13 +30,14 @@ export async function revokeCodesUsedByOrder(
   const claims = await claimRepository.findIssuedCodes(shopDomain, candidates);
 
   for (const claim of claims) {
-    // Another order already spent this code (or this webhook is a repeat): leave it as it is.
-    if (claim.redeemedAt) continue;
+    // Another order already spent this code: it was revoked for that order, leave it as it is.
+    if (claim.redeemedOrderId && claim.redeemedOrderId !== orderId) continue;
     const discountId = claim.campaign.discountId;
     if (!discountId) continue;
 
-    // Recorded first: if the delete then fails, the admin still shows the code as spent and a
-    // retry of this webhook will try the delete again.
+    // Recorded first, then the delete. A repeat of this same order's webhook runs the delete again
+    // (it is harmless once the code is gone), so a delete that failed is retried rather than skipped.
+    // Errors are thrown on purpose: the webhook then answers with an error and Shopify sends it again.
     await claimRepository.markRedeemed(shopDomain, claim.id, orderId);
     const result = await revokeClaimCode(admin, { discountId, code: claim.discountCode });
     logger.info({ shopDomain, orderId, code: claim.discountCode, result }, "claim code revoked after order");

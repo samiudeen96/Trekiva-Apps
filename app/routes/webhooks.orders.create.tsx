@@ -17,8 +17,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   try {
     await revokeCodesUsedByOrder(admin, shop, payload);
   } catch (err) {
-    // Never fail the webhook: Shopify would retry, and the next order would queue up behind it.
-    logger.warn({ err, shop }, "could not revoke the claim code used by an order");
+    // Answer with an error so Shopify sends the webhook again (it retries for several hours). Every step
+    // is safe to repeat, and leaving the code live after an order is exactly what this exists to prevent.
+    logger.error({ err, shop }, "could not revoke the claim code used by an order; Shopify will retry");
+    return new Response(null, { status: 500 });
   }
   return new Response();
 };

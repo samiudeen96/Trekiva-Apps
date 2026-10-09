@@ -10,15 +10,28 @@ const ORDER = "gid://shopify/Order/555";
 const OURS = "WELCOME10-TS73UDMA";
 let campaignId: string;
 
-/** Records every call, and answers as Shopify would for `code` living on `ownerId`. */
-function fakeAdmin(codes: Record<string, string> = { [OURS]: DISCOUNT }) {
+/**
+ * Records every call, and answers as Shopify would for `code` living on `ownerId`. A deleted code is gone
+ * afterwards, as in Shopify. `failDeletes` makes that many delete calls fail first, like a Shopify outage.
+ */
+function fakeAdmin(codes: Record<string, string> = { [OURS]: DISCOUNT }, { failDeletes = 0 } = {}) {
+  codes = { ...codes };
   const calls: { op: string; variables: Record<string, unknown> }[] = [];
+  let lastLookup = "";
   const admin: AdminGraphqlClient = {
     graphql: async (query: string, options) => {
       const variables = options?.variables ?? {};
       const op = /Trekiva(\w+)/.exec(query)?.[1] ?? "unknown";
       calls.push({ op, variables });
+      if (op === "DeleteRedeemCodes") {
+        if (failDeletes > 0) {
+          failDeletes -= 1;
+          return new Response(JSON.stringify({ errors: [{ message: "Internal error" }] }));
+        }
+        delete codes[lastLookup];
+      }
       const code = String(variables.code ?? "");
+      if (code) lastLookup = code.toUpperCase();
       const owner = codes[code.toUpperCase()];
       const body = {
         RedeemCodeId: {
@@ -142,6 +155,21 @@ describe("revokeCodesUsedByOrder", () => {
     expect(after.redeemedOrderId).toBe(ORDER);
   });
 
+  it("a delete that failed is tried again when Shopify resends the webhook", async () => {
+    const row = await claim(OURS);
+    const { admin, deleted } = fakeAdmin(undefined, { failDeletes: 1 });
+
+    // First delivery: Shopify errors on the delete, so the webhook must fail (Shopify then resends it).
+    await expect(revokeCodesUsedByOrder(admin, shop, orderWith(OURS))).rejects.toThrow();
+    const marked = await db.welcomeOfferClaim.findUniqueOrThrow({ where: { id: row.id } });
+    expect(marked.redeemedOrderId).toBe(ORDER);
+
+    // The resend for the SAME order must not be skipped just because the claim is already marked.
+    await revokeCodesUsedByOrder(admin, shop, orderWith(OURS));
+    expect(deleted()).toHaveLength(2);
+    expect(deleted()[1].variables).toMatchObject({ discountId: DISCOUNT });
+  });
+
   it("leaves a code alone once another order has spent it", async () => {
     await claim(OURS, { redeemedAt: new Date(), redeemedOrderId: "gid://shopify/Order/1" });
     const { admin, calls } = fakeAdmin();
@@ -162,6 +190,29 @@ describe("restoreCodesFromOrder", () => {
     expect(calls.some((c) => c.op === "AddRedeemCode")).toBe(true);
     const after = await db.welcomeOfferClaim.findUniqueOrThrow({ where: { id: row.id } });
     expect(after.redeemedAt).toBeNull();
+    expect(after.redeemedOrderId).toBeNull();
+  });
+
+  it("a restore that failed is tried again when Shopify resends the cancellation", async () => {
+    const row = await claim(OURS, { redeemedAt: new Date(), redeemedOrderId: ORDER });
+    let fail = true;
+    const base = fakeAdmin({});
+    const admin: AdminGraphqlClient = {
+      graphql: async (q, o) => {
+        if (fail && /TrekivaAddRedeemCode/.test(q)) {
+          fail = false;
+          return new Response(JSON.stringify({ errors: [{ message: "Internal error" }] }));
+        }
+        return base.admin.graphql(q, o);
+      },
+    };
+
+    await expect(restoreCodesFromOrder(admin, shop, orderWith(OURS))).rejects.toThrow();
+    // Still marked, so the resend knows this order's code has not been given back yet.
+    expect((await db.welcomeOfferClaim.findUniqueOrThrow({ where: { id: row.id } })).redeemedOrderId).toBe(ORDER);
+
+    await restoreCodesFromOrder(admin, shop, orderWith(OURS));
+    const after = await db.welcomeOfferClaim.findUniqueOrThrow({ where: { id: row.id } });
     expect(after.redeemedOrderId).toBeNull();
   });
 

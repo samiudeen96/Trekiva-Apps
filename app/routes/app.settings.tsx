@@ -122,6 +122,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       campaign: c.campaign.name,
       step: c.failureStep ? (stepLabel[c.failureStep] ?? c.failureStep) : null,
       reason: c.failureReason,
+      instant: c.delivery === "INSTANT",
       at: c.updatedAt.toISOString(),
     })),
   };
@@ -218,6 +219,8 @@ export default function Settings() {
               <s-banner tone={result.failed > 0 ? "warning" : "success"}>
                 Retried {result.attempted}: {result.succeeded} succeeded, {result.failed} failed again
                 {result.skipped > 0 ? `, ${result.skipped} skipped` : ""}.
+                {result.needsCustomer > 0 &&
+                  ` ${result.needsCustomer} instant-apply claim(s) were left alone: they complete when that customer submits the popup again.`}
               </s-banner>
             )}
             <s-text color="subdued">
@@ -235,6 +238,12 @@ export default function Settings() {
                     {f.step ? `Stopped at: ${f.step}` : "Reason not recorded (failed before this was tracked)"}
                   </s-text>
                   {f.reason && <s-text color="subdued">{f.reason}</s-text>}
+                  {f.instant && (
+                    <s-text color="subdued">
+                      Instant apply with no email: a retry from here cannot reach this customer. It completes when they
+                      submit the popup again.
+                    </s-text>
+                  )}
                 </s-stack>
               </s-box>
             ))}

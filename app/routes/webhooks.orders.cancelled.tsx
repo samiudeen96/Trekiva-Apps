@@ -11,7 +11,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   try {
     await restoreCodesFromOrder(admin, shop, payload);
   } catch (err) {
-    logger.warn({ err, shop }, "could not restore the claim code after a cancellation");
+    // Answer with an error so Shopify sends the webhook again; restoring is safe to repeat.
+    logger.error({ err, shop }, "could not restore the claim code after a cancellation; Shopify will retry");
+    return new Response(null, { status: 500 });
   }
   return new Response();
 };
