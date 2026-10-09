@@ -87,7 +87,7 @@ function build(
 
 /** Turns the first-purchase gate on for the campaign under test. */
 const requireFirstPurchase = () =>
-  db.campaign.update({ where: { id: campaignId }, data: { rules: { firstPurchaseOnly: true } } });
+  db.campaign.update({ where: { id: campaignId }, data: { rules: { firstPurchaseOnly: true, applyOnSignup: false } } });
 
 const claims = () => db.welcomeOfferClaim.findMany({ where: { shopDomain: shop } });
 const only = () => db.welcomeOfferClaim.findFirstOrThrow({ where: { shopDomain: shop } });
@@ -108,7 +108,7 @@ beforeEach(async () => {
       discountCode: "WELCOME10",
       content,
       design: {},
-      rules: {},
+      rules: { applyOnSignup: false },
     },
   });
   campaignId = c.id;
@@ -119,6 +119,105 @@ afterAll(async () => {
   await db.campaign.deleteMany({ where: { shopDomain: shop } });
   await db.emailTemplate.deleteMany({ where: { shopDomain: shop } });
   await db.$disconnect();
+});
+
+/** Switches the campaign to instant apply, the way the merchant's checkbox does. */
+const applyInstantly = (extra: Record<string, unknown> = {}) =>
+  db.campaign.update({ where: { id: campaignId }, data: { rules: { applyOnSignup: true, ...extra } } });
+
+describe("ClaimService: instant apply", () => {
+  it("hands back the code to apply, sends no email and adds no tag or metafields", async () => {
+    await applyInstantly();
+    const { service, order, sendWelcomeOffer, writeClaimMetafields, addClaimTag } = build({ appEmail: true });
+
+    const out = await claim(service, "new@example.com");
+
+    expect(out.status).toBe("claimed");
+    const row = await only();
+    expect(out.applyPath).toBe(`/discount/${row.discountCode}`);
+    expect(row.discountCode).toMatch(CLAIM_CODE);
+    // The customer is still created (so signing up subscribes them) and the code made redeemable,
+    // but nothing is emailed and Flow is never involved.
+    expect(order).toEqual(["customer", "discount"]);
+    expect(sendWelcomeOffer).not.toHaveBeenCalled();
+    expect(writeClaimMetafields).not.toHaveBeenCalled();
+    expect(addClaimTag).not.toHaveBeenCalled();
+    expect(row).toMatchObject({ delivery: "INSTANT", emailStatus: "APPLIED", emailSentAt: null });
+  });
+
+  it("uses the applied wording, not the 'check your inbox' wording", async () => {
+    await applyInstantly();
+    const out = await claim(build().service, "new@example.com");
+    expect(out.title).toMatch(/applied/i);
+    expect(out.message).toMatch(/applied/i);
+    expect(out.message).not.toMatch(/inbox/i);
+  });
+
+  it("never returns the code to an email that already claimed", async () => {
+    await applyInstantly();
+    const { service } = build();
+    await claim(service, "same@example.com");
+
+    const again = await claim(service, "  SAME@example.com ");
+
+    expect(again.status).toBe("already_claimed");
+    expect(again.applyPath).toBeUndefined();
+    expect(JSON.stringify(again)).not.toMatch(/WELCOME10-/);
+    expect(await claims()).toHaveLength(1);
+  });
+
+  it("still refuses a returning customer when first-purchase is on", async () => {
+    await applyInstantly({ firstPurchaseOnly: true });
+    const { service, issueCode } = build({ existing: { id: CUSTOMER_ID, hasOrders: true } });
+
+    const out = await claim(service, "back@example.com");
+
+    expect(out.status).toBe("not_eligible");
+    expect(out.applyPath).toBeUndefined();
+    expect(issueCode).not.toHaveBeenCalled();
+    expect(await claims()).toHaveLength(0);
+  });
+
+  it("gives out no code when Shopify could not add it, and the retry reuses the same one", async () => {
+    await applyInstantly();
+    let fail = true;
+    const { service } = build({
+      issueCode: () => {
+        if (fail) throw new Error("shopify down");
+      },
+    });
+
+    await expect(claim(service, "retry@example.com")).rejects.toThrow("shopify down");
+    const failed = await only();
+    expect(failed.emailStatus).toBe("FAILED");
+
+    fail = false;
+    const out = await claim(service, "retry@example.com");
+    expect(out.applyPath).toBe(`/discount/${failed.discountCode}`);
+    expect((await only()).emailStatus).toBe("APPLIED");
+  });
+
+  it("is settled after success: a later submit is just already-claimed", async () => {
+    await applyInstantly();
+    const { service, issueCode } = build();
+    await claim(service, "once@example.com");
+    issueCode.mockClear();
+
+    const again = await claim(service, "once@example.com");
+
+    expect(again.status).toBe("already_claimed");
+    expect(issueCode).not.toHaveBeenCalled();
+  });
+
+  it("only one of many simultaneous submits for one email gets the code", async () => {
+    await applyInstantly();
+    const { service } = build();
+
+    const outcomes = await Promise.all(Array.from({ length: 15 }, () => claim(service, "race@example.com")));
+
+    expect(outcomes.filter((o) => o.applyPath)).toHaveLength(1);
+    expect(await claims()).toHaveLength(1);
+  });
 });
 
 describe("ClaimService: new eligible customer", () => {
@@ -447,7 +546,7 @@ describe("ClaimService: Shopify failures and retry", () => {
     // Codes only have to be unique within the shop that issued them.
     const otherShop = `${shop}-sibling`;
     const sibling = await db.campaign.create({
-      data: { shopDomain: otherShop, name: "C", status: "ACTIVE", discountCode: "W", content: {}, design: {}, rules: {} },
+      data: { shopDomain: otherShop, name: "C", status: "ACTIVE", discountCode: "W", content: {}, design: {}, rules: { applyOnSignup: false } },
     });
     await expect(
       db.welcomeOfferClaim.create({

@@ -6,6 +6,14 @@ export type ClaimStatus = "claimed" | "already_claimed" | "not_eligible";
 export interface ClaimOutcome {
   status: ClaimStatus;
   message: string;
+  /** Overrides the popup's title for this outcome (instant apply has its own wording). */
+  title?: string;
+  /**
+   * Instant apply only: the store path ("/discount/CODE") the popup opens in the background to apply
+   * the discount. Present only on the request that created or completed the claim, never for an
+   * email that already claimed, or anyone could read another person's code by typing their address.
+   */
+  applyPath?: string;
 }
 
 export interface ClaimContext {

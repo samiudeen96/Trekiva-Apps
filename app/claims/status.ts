@@ -15,6 +15,8 @@ export function emailBadge(status: EmailStatus, eligibility: EmailEligibility): 
       return { label: "Pending", tone: "neutral" };
     case "EMAIL_SENT":
       return { label: "Email sent", tone: "success" };
+    case "APPLIED":
+      return { label: "Applied instantly", tone: "success" };
     case "READY_FOR_FLOW":
       if (eligibility === "NOT_SUBSCRIBED") return { label: "Not subscribed", tone: "warning" };
       if (eligibility === "UNKNOWN") return { label: "Waiting for Flow (consent unknown)", tone: "info" };

@@ -61,7 +61,7 @@ export type DeliveryBucket = "sent" | "waiting" | "notSubscribed" | "failed";
  */
 export function deliveryBucket(status: EmailStatus, eligibility: EmailEligibility): DeliveryBucket {
   if (status === "FAILED") return "failed";
-  if (status === "EMAIL_SENT" || status === "SENT") return "sent";
+  if (status === "EMAIL_SENT" || status === "SENT" || status === "APPLIED") return "sent";
   if (status === "NOT_SUBSCRIBED" || eligibility === "NOT_SUBSCRIBED") return "notSubscribed";
   return "waiting";
 }

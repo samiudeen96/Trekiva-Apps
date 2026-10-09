@@ -7,6 +7,7 @@ describe("emailBadge", () => {
     expect(emailBadge("READY_FOR_FLOW", "NOT_SUBSCRIBED")).toEqual({ label: "Not subscribed", tone: "warning" });
     expect(emailBadge("READY_FOR_FLOW", "UNKNOWN").label).toMatch(/consent unknown/);
     expect(emailBadge("EMAIL_SENT", "SUBSCRIBED")).toEqual({ label: "Email sent", tone: "success" });
+    expect(emailBadge("APPLIED", "SUBSCRIBED")).toEqual({ label: "Applied instantly", tone: "success" });
     expect(emailBadge("FAILED", "UNKNOWN").tone).toBe("critical");
     expect(emailBadge("PENDING", "UNKNOWN").tone).toBe("neutral");
   });

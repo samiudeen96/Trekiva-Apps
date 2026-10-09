@@ -134,6 +134,7 @@ export default function Claims() {
             >
               <s-option value="">All email statuses</s-option>
               <s-option value="sent">Email sent</s-option>
+              <s-option value="applied">Applied instantly</s-option>
               <s-option value="pending">Pending</s-option>
               <s-option value="failed">Failed</s-option>
               <s-option value="flow">Sent by Flow (older)</s-option>

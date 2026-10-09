@@ -9,6 +9,7 @@ const include = { campaign: { select: { name: true } } } as const;
 /** The email-status filter groups the statuses the way the badges read, legacy ones included. */
 export const STATUS_FILTERS = {
   sent: ["EMAIL_SENT", "SENT"],
+  applied: ["APPLIED"],
   pending: ["PENDING"],
   failed: ["FAILED"],
   flow: ["READY_FOR_FLOW", "TRIGGERED", "NOT_SUBSCRIBED"],

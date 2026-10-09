@@ -55,7 +55,7 @@ export class ClaimService {
     campaignId: string;
     emailNormalized: string;
     marketingConsent: boolean;
-    delivery: "FLOW" | "APP";
+    delivery: "FLOW" | "APP" | "INSTANT";
     baseCode: string;
   }) {
     const { baseCode, ...row } = input;
@@ -140,14 +140,14 @@ export class ClaimService {
 
     // Who delivers this claim is fixed when it is created, so changing the configuration later can
     // never email an already-handled claim a second time.
-    const delivery: "FLOW" | "APP" = this.email ? "APP" : "FLOW";
+    const delivery: "FLOW" | "APP" | "INSTANT" = rules.applyOnSignup ? "INSTANT" : this.email ? "APP" : "FLOW";
 
     let claimId: string;
     let claimedAt: Date;
     let code: string;
     let consent: boolean;
     let firstAttempt: boolean;
-    let mode: "FLOW" | "APP";
+    let mode: "FLOW" | "APP" | "INSTANT";
     const row = await this.insertClaim({
       shopDomain,
       campaignId,
@@ -177,8 +177,11 @@ export class ClaimService {
         },
       });
       if (!existing || existing.flowTriggeredAt) return already;
-      const unsettled = existing.delivery === "APP" ? { emailSentAt: null } : { flowHandoffAt: null };
-      if (existing.delivery === "APP" ? existing.emailSentAt : existing.flowHandoffAt) return already;
+      if (existing.delivery === "INSTANT" ? existing.emailStatus === "APPLIED" : existing.delivery === "APP" ? existing.emailSentAt : existing.flowHandoffAt) {
+        return already;
+      }
+      const unsettled =
+        existing.delivery === "INSTANT" ? {} : existing.delivery === "APP" ? { emailSentAt: null } : { flowHandoffAt: null };
 
       const lock = await db.welcomeOfferClaim.updateMany({
         where: {
@@ -212,6 +215,21 @@ export class ClaimService {
       // The code must be redeemable before the customer can be told about it.
       step = "discount";
       await this.discountCodes.issueCode({ discountId, code });
+
+      if (mode === "INSTANT") {
+        // No email, metafields or Flow tag: the customer already has the code (redeemable above) and the
+        // popup applies it in their browser. The customer record exists so signing up still subscribes them.
+        await db.welcomeOfferClaim.update({
+          where: { id: claimId },
+          data: { emailStatus: "APPLIED", failureStep: null, failureReason: null },
+        });
+        return {
+          status: "claimed",
+          message: content.appliedMessage,
+          title: content.appliedTitle,
+          applyPath: `/discount/${encodeURIComponent(code)}`,
+        };
+      }
 
       if (mode === "APP") {
         // The app sends the email, so Flow has nothing to do: no tag (a workflow left switched on
@@ -274,7 +292,10 @@ export class ClaimService {
       logger.error({ err, claimId, shopDomain, campaignId, step }, "claim fulfilment failed");
       await db.welcomeOfferClaim
         .updateMany({
-          where: { id: claimId, ...(mode === "APP" ? { emailSentAt: null } : { flowHandoffAt: null }) },
+          where: {
+            id: claimId,
+            ...(mode === "INSTANT" ? { emailStatus: { not: "APPLIED" as const } } : mode === "APP" ? { emailSentAt: null } : { flowHandoffAt: null }),
+          },
           data: {
             emailStatus: "FAILED",
             failureStep: step,

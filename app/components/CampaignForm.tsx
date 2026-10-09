@@ -29,8 +29,10 @@ const contentFields: [keyof CampaignContent, string, boolean][] = [
   ["description", "Description", true],
   ["emailPlaceholder", "Email placeholder", false],
   ["buttonText", "Button text", false],
-  ["successTitle", "Success title", false],
-  ["successMessage", "Success message", true],
+  ["successTitle", "Success title (email sent)", false],
+  ["successMessage", "Success message (email sent)", true],
+  ["appliedTitle", "Applied title", false],
+  ["appliedMessage", "Applied message (instant apply)", true],
   ["alreadyClaimedTitle", "Already claimed title", false],
   ["alreadyClaimedMessage", "Already claimed message", true],
   ["notEligibleTitle", "Not eligible title", false],
@@ -277,6 +279,16 @@ export function CampaignForm({ initial, errors = {}, heading, discounts, emailEn
               Frequency only controls when the popup is shown. Each email can still claim a campaign only once.
             </s-text>
             <s-checkbox
+              name="rules.applyOnSignup"
+              label="Apply the discount instantly after signup (no email)"
+              checked={rules.applyOnSignup}
+            />
+            <s-text color="subdued">
+              When on, the customer&apos;s unique code is applied in their browser the moment they submit, and no
+              email is sent. When off, the code is emailed instead (step 7). Each email still gets one code, usable
+              once.
+            </s-text>
+            <s-checkbox
               name="rules.firstPurchaseOnly"
               label="First-time customers only"
               checked={rules.firstPurchaseOnly}
@@ -290,6 +302,12 @@ export function CampaignForm({ initial, errors = {}, heading, discounts, emailEn
         </s-section>
 
         <s-section heading="7. Email delivery">
+          {rules.applyOnSignup && (
+            <s-banner tone="info">
+              Instant apply is on (step 6), so no email is sent and this step is not used. Turn instant apply off to
+              email the code instead.
+            </s-banner>
+          )}
           {emailEnabled ? (
             <s-stack gap="small-200">
               <s-text>

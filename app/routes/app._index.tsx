@@ -72,7 +72,7 @@ const n = (v: number) => v.toLocaleString("en-US");
 
 // Status colours are fixed (good / warning / critical); "waiting" is neutral. Each segment is also named in the list.
 const BUCKETS: { key: DeliveryBucket; label: string; hint: string; color: string }[] = [
-  { key: "sent", label: "Email sent", hint: "The customer has their code", color: "#0ca30c" },
+  { key: "sent", label: "Code delivered", hint: "Emailed or applied instantly", color: "#0ca30c" },
   { key: "waiting", label: "Waiting for email", hint: "In progress", color: "#b5b5b0" },
   { key: "notSubscribed", label: "Not subscribed", hint: "Valid code, no marketing email", color: "#fab219" },
   { key: "failed", label: "Failed", hint: "Retry from Settings", color: "#d03b3b" },

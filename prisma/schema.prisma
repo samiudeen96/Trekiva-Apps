@@ -58,6 +58,8 @@ enum EmailStatus {
   READY_FOR_FLOW
   // Flow added trekiva_welcome_email_sent (Flow ran its email action).
   EMAIL_SENT
+  // Instant apply: the code was handed to the customer's browser at signup, no email involved.
+  APPLIED
 }
 
 // Who sends this claim's email. Fixed when the claim is created, so switching modes later never
@@ -67,6 +69,8 @@ enum EmailDelivery {
   FLOW
   // The app sends it itself through Resend.
   APP
+  // No email at all: the discount is applied in the customer's browser when they submit the popup.
+  INSTANT
 }
 
 // Whether Shopify Email may send marketing email to this customer. Separate from the claim itself:

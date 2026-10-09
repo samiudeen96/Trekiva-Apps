@@ -11,6 +11,8 @@ export const contentSchema = z.object({
   buttonText: text(40),
   successTitle: text(120),
   successMessage: text(400),
+  appliedTitle: text(120),
+  appliedMessage: text(400),
   alreadyClaimedTitle: text(120),
   alreadyClaimedMessage: text(400),
   notEligibleTitle: text(120),
@@ -51,6 +53,11 @@ export const rulesSchema = z.object({
    * only thing that keeps returning customers out.
    */
   firstPurchaseOnly: z.boolean(),
+  /**
+   * After signup, apply the discount in the customer's browser straight away instead of emailing the
+   * code. The email path stays in the app and can be switched back on by clearing this.
+   */
+  applyOnSignup: z.boolean(),
 });
 
 export const detailsSchema = z.object({

@@ -128,7 +128,8 @@
         })
         .then(function (r) {
           if (r.ok && (r.body.status === "claimed" || r.body.status === "already_claimed" || r.body.status === "not_eligible")) {
-            onResult(r.body.status, r.body.message);
+            applyDiscount(r.body.applyPath);
+            onResult(r.body.status, r.body.message, r.body.title);
           } else {
             throw new Error(r.body && r.body.message ? r.body.message : "error");
           }
@@ -144,7 +145,18 @@
     return { node: wrap, focus: function () { input.focus(); } };
   }
 
-  function resultView(c, status, message) {
+  // Instant apply: visiting Shopify's own /discount/CODE link stores the code for checkout, exactly as the
+  // email button does. Done in the background (the redirect is not followed) so the popup stays put. Only a
+  // same-store path the server returned is ever requested, and a failure just means the customer applies
+  // the code later; it must never break the page.
+  function applyDiscount(path) {
+    if (typeof path !== "string" || path.indexOf("/discount/") !== 0) return;
+    try {
+      fetch(path, { redirect: "manual", credentials: "same-origin" }).catch(function () { /* ignore */ });
+    } catch (e) { /* ignore */ }
+  }
+
+  function resultView(c, status, message, title) {
     var wrap = el("div", "tkv-state");
     // Campaigns saved before these fields existed fall back to the already-claimed copy.
     var titles = {
@@ -158,7 +170,7 @@
       not_eligible: c.content.notEligibleMessage || c.content.alreadyClaimedMessage
     };
     wrap.appendChild(el("span", "tkv-badge")).setAttribute("aria-hidden", "true");
-    var h = el("h2", "tkv-title", titles[status] || titles.already_claimed);
+    var h = el("h2", "tkv-title", title || titles[status] || titles.already_claimed);
     h.id = "tkv-title";
     h.tabIndex = -1;
     wrap.appendChild(h);
@@ -254,8 +266,8 @@
       current = view;
       body.appendChild(view.node);
     }
-    show(formView(c, function (status, message) {
-      show(resultView(c, status, message));
+    show(formView(c, function (status, message, title) {
+      show(resultView(c, status, message, title));
       current.focus();
     }));
 

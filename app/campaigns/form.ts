@@ -47,6 +47,7 @@ export function parseCampaignForm(fd: FormData): ParseResult {
       .map((l) => l.trim())
       .filter(Boolean),
     firstPurchaseOnly: fd.get("rules.firstPurchaseOnly") === "on",
+    applyOnSignup: fd.get("rules.applyOnSignup") === "on",
   });
 
   if (!details.success) collect("details", details.error.issues);

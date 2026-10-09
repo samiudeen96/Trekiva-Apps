@@ -153,7 +153,7 @@ beforeEach(async () => {
   await db.campaign.deleteMany({ where: { shopDomain: shop } });
   campaignId = (
     await db.campaign.create({
-      data: { shopDomain: shop, name: "Welcome", status: "ACTIVE", discountId: DISCOUNT_ID, discountCode: "WELCOME10", content: {}, design: {}, rules: {} },
+      data: { shopDomain: shop, name: "Welcome", status: "ACTIVE", discountId: DISCOUNT_ID, discountCode: "WELCOME10", content: {}, design: {}, rules: { applyOnSignup: false } },
     })
   ).id;
 });
@@ -269,7 +269,7 @@ describe("claim -> Shopify Flow handoff (end to end)", () => {
   });
 
   it("a returning customer is refused up front: no code, no metafields, no tag, no Flow start", async () => {
-    await db.campaign.update({ where: { id: campaignId }, data: { rules: { firstPurchaseOnly: true } } });
+    await db.campaign.update({ where: { id: campaignId }, data: { rules: { firstPurchaseOnly: true, applyOnSignup: false } } });
     const sh = fakeShopify(DISCOUNT_ID);
     seed(sh, { email: "regular@x.co", orders: 3, tags: ["vip"] });
 
@@ -282,7 +282,7 @@ describe("claim -> Shopify Flow handoff (end to end)", () => {
   });
 
   it("lets a first-time customer through when the rule is on", async () => {
-    await db.campaign.update({ where: { id: campaignId }, data: { rules: { firstPurchaseOnly: true } } });
+    await db.campaign.update({ where: { id: campaignId }, data: { rules: { firstPurchaseOnly: true, applyOnSignup: false } } });
     const sh = fakeShopify(DISCOUNT_ID);
     seed(sh, { email: "browser@x.co", orders: 0 });
     expect((await submit(build(sh), "browser@x.co")).status).toBe("claimed");
