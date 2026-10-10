@@ -48,24 +48,8 @@ describe("parseCampaignForm: email template", () => {
 });
 
 describe("parseCampaignForm: how the customer gets the code", () => {
-  it("defaults to instant apply and the email together", () => {
-    const r = parseCampaignForm(formData());
-    expect(r.ok && r.input.rules).toMatchObject({ applyOnSignup: true, emailCode: true });
-  });
-
-  it("accepts either switch alone", () => {
-    const instantOnly = parseCampaignForm(formData("", { "rules.emailCode": "" }));
-    expect(instantOnly.ok && instantOnly.input.rules).toMatchObject({ applyOnSignup: true, emailCode: false });
-    const emailOnly = parseCampaignForm(formData("", { "rules.applyOnSignup": "" }));
-    expect(emailOnly.ok && emailOnly.input.rules).toMatchObject({ applyOnSignup: false, emailCode: true });
-  });
-
-  it("refuses both off, because the customer would have no way to get the code", () => {
-    const fd = formData();
-    fd.delete("rules.applyOnSignup");
-    fd.delete("rules.emailCode");
-    const r = parseCampaignForm(fd);
-    expect(r.ok).toBe(false);
-    expect(!r.ok && r.errors["rules.emailCode"]).toMatch(/instant apply|email/i);
+  it("always emails the code and never applies it instantly", () => {
+    const r = parseCampaignForm(formData("", { "rules.applyOnSignup": "on", "rules.emailCode": "" }));
+    expect(r.ok && r.input.rules).toMatchObject({ applyOnSignup: false, emailCode: true });
   });
 });

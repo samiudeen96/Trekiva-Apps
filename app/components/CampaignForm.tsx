@@ -280,22 +280,6 @@ export function CampaignForm({ initial, errors = {}, heading, discounts, emailEn
               Frequency only controls when the popup is shown. Each email can still claim a campaign only once.
             </s-text>
             <s-checkbox
-              name="rules.applyOnSignup"
-              label="Apply the discount instantly after signup"
-              checked={rules.applyOnSignup}
-            />
-            <s-checkbox
-              name="rules.emailCode"
-              label="Email the code with an Apply button"
-              checked={rules.emailCode}
-              error={err("rules.emailCode")}
-            />
-            <s-text color="subdued">
-              Turn on either one or both. Instant apply puts the customer&apos;s unique code in their browser the moment
-              they submit; the email (step 7) carries an Apply button that applies it again, which works on another
-              device or after they close the browser. Each email still gets one code, usable once.
-            </s-text>
-            <s-checkbox
               name="rules.firstPurchaseOnly"
               label="First-time customers only"
               checked={rules.firstPurchaseOnly}
@@ -309,11 +293,6 @@ export function CampaignForm({ initial, errors = {}, heading, discounts, emailEn
         </s-section>
 
         <s-section heading="7. Email delivery">
-          {!rules.emailCode && (
-            <s-banner tone="info">
-              &quot;Email the code&quot; is off (step 6), so no email is sent and this step is not used.
-            </s-banner>
-          )}
           {emailEnabled ? (
             <s-stack gap="small-200">
               <s-text>

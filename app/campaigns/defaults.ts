@@ -9,7 +9,7 @@ export const defaultCampaign: CampaignInput = {
     emailPlaceholder: "Enter your email",
     buttonText: "Get 10% Off",
     successTitle: "Check your inbox 🎉",
-    successMessage: "Check your inbox for your 10% welcome offer.",
+    successMessage: "Check your inbox for your 10% welcome offer. If you don't see it, look in Promotions or Spam.",
     appliedTitle: "Discount applied 🎉",
     appliedMessage: "Your 10% welcome discount has been applied. It will take effect automatically at checkout.",
     appliedEmailedMessage:
@@ -43,7 +43,7 @@ export const defaultCampaign: CampaignInput = {
     frequency: "visitor",
     frequencyDays: 7,
     firstPurchaseOnly: false,
-    applyOnSignup: true,
+    applyOnSignup: false,
     emailCode: true,
   },
   emailTemplateId: null,

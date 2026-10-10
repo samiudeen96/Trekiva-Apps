@@ -47,8 +47,9 @@ export function parseCampaignForm(fd: FormData): ParseResult {
       .map((l) => l.trim())
       .filter(Boolean),
     firstPurchaseOnly: fd.get("rules.firstPurchaseOnly") === "on",
-    applyOnSignup: fd.get("rules.applyOnSignup") === "on",
-    emailCode: fd.get("rules.emailCode") === "on",
+    // Instant apply is not offered: the customer always gets the code by email.
+    applyOnSignup: false,
+    emailCode: true,
   });
 
   if (!details.success) collect("details", details.error.issues);
@@ -58,9 +59,6 @@ export function parseCampaignForm(fd: FormData): ParseResult {
 
   if (!details.success || !content.success || !design.success || !rules.success) {
     return { ok: false, errors };
-  }
-  if (!rules.data.applyOnSignup && !rules.data.emailCode) {
-    return { ok: false, errors: { "rules.emailCode": "Turn on instant apply, the email, or both: the customer needs some way to get the code" } };
   }
   if (rules.data.pages === "specific" && rules.data.specificUrls.length === 0) {
     return { ok: false, errors: { "rules.specificUrls": "Add at least one URL" } };

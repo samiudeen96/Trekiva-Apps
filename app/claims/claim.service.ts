@@ -148,11 +148,9 @@ export class ClaimService {
 
     // Who delivers this claim is fixed when it is created, so changing the configuration later can
     // never email an already-handled claim a second time.
-    // "Email the code" asks for an email; with instant apply but no way to send one (no Resend key), the
-    // claim is simply instant. With instant apply off the original email/Flow paths run as before.
-    const emailWanted = rules.emailCode;
-    const delivery: "FLOW" | "APP" | "INSTANT" =
-      rules.applyOnSignup && !(emailWanted && this.email) ? "INSTANT" : this.email ? "APP" : "FLOW";
+    // New claims are always delivered by email (the app's own, or Flow). INSTANT only remains for claims
+    // created while instant apply was offered, so they can still be retried or looked up.
+    const delivery: "FLOW" | "APP" | "INSTANT" = this.email ? "APP" : "FLOW";
 
     let claimId: string;
     let claimedAt: Date;
@@ -268,7 +266,7 @@ export class ClaimService {
         } catch (err) {
           logger.warn({ err, claimId }, "email sent, but the customer metafields could not be mirrored");
         }
-        return rules.applyOnSignup ? appliedOutcome(code, true) : claimed;
+        return claimed;
       }
 
       step = "metafields";
