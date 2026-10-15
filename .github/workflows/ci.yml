@@ -26,7 +26,7 @@ jobs:
       # CI-only database; the claim tests need a real PostgreSQL for the unique constraint.
       DATABASE_URL: postgresql://trekiva:ci-password@localhost:5432/trekiva?schema=public
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v4
         with:
           node-version-file: .nvmrc
